@@ -1,0 +1,8 @@
+{
+  "name": "Lexus Experience Amazing",
+  "description": "A high-fidelity 3D car configurator and driving experience using Three.js and Angular.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

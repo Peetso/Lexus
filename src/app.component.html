@@ -1,0 +1,309 @@
+
+<!-- Three.js Layer -->
+<div id="canvas-container" class="absolute inset-0 z-0">
+  <app-canvas-viewer></app-canvas-viewer>
+</div>
+
+<!-- Mobile Fullscreen Request Overlay -->
+@if (showFsOverlay) {
+  <div class="mobile-fullscreen-overlay fixed inset-0 z-[100] bg-black/95 flex flex-col items-center justify-center p-10 text-center backdrop-blur-md">
+    <div class="text-white text-4xl mb-6"><i class="fas fa-expand"></i></div>
+    <h2 class="text-xl font-bold mb-4 uppercase tracking-widest text-white">Immersive Experience</h2>
+    <p class="text-xs text-zinc-400 mb-8 max-w-[250px] leading-relaxed">For the best experience, please enter fullscreen mode to enable responsive controls.</p>
+    <button (click)="enterFullScreen()" class="glass-btn border-white/50 text-white font-bold py-3 px-8 hover:bg-white hover:text-black transition-all">
+      ENTER FULLSCREEN
+    </button>
+    <button (click)="dismissFsOverlay()" class="mt-8 text-[10px] text-zinc-600 uppercase tracking-widest hover:text-white transition-colors">
+      Continue in Window
+    </button>
+  </div>
+}
+
+<!-- UI Layer -->
+<div class="ui-layer flex flex-col justify-between h-full pointer-events-none">
+  
+  <!-- Top Navigation Menu -->
+  @if (!store.isCustomizing()) {
+    <nav class="absolute top-0 left-0 w-full flex justify-center gap-8 p-6 z-40 pointer-events-auto mix-blend-screen text-white uppercase text-[10px] tracking-[0.2em] font-bold hidden md:flex">
+      <a href="#" class="hover:text-amber-500 transition-colors">Experience Amazing</a>
+      <a href="#" class="hover:text-amber-500 transition-colors">Our Fleet</a>
+      <a href="#" class="hover:text-amber-500 transition-colors">Only Luxury</a>
+      <a href="#" class="hover:text-amber-500 transition-colors">Talk to Us</a>
+    </nav>
+  }
+
+  <!-- Branding -->
+  @if (!store.isCustomizing()) {
+    <div class="branding pointer-events-auto">
+      <img [src]="store.config().logoUrl" alt="Lexus" class="lexus-logo">
+      <div class="header-meta">
+        <span class="sub" [style.color]="store.config().lighting.accentColor">{{store.config().texts.subtitle}}</span>
+        <h1>{{store.activeSection().label}}</h1>
+        <p class="desc" [style.border-color]="store.activeCar().color">
+          {{store.activeCar().name}} {{store.activeCar().year}}<br/>
+          <span class="text-xs opacity-70">{{store.activeCar().type}}</span>
+        </p>
+      </div>
+    </div>
+  }
+
+  <!-- Top Right Controls -->
+  <div class="interactive absolute top-10 right-10 flex gap-4 items-center z-50 pointer-events-auto">
+    <button class="glass-btn min-w-[40px] flex items-center justify-center" (click)="store.toggleMute()">
+      <i class="fas" [class.fa-volume-mute]="store.config().audio.muted" [class.fa-volume-up]="!store.config().audio.muted"></i>
+    </button>
+  </div>
+
+  <!-- Timeline -->
+  @if (!store.isCustomizing()) {
+    <div class="timeline interactive pointer-events-auto">
+      @for (sec of store.sections(); track sec.id; let idx = $index) {
+        <div class="timeline-item" [class.active]="store.activeSectionIndex() === idx" (click)="store.activeSectionIndex.set(idx)">
+          <span class="timeline-text">{{sec.label}}</span>
+          <div class="timeline-dot" 
+               [style.color]="store.activeSectionIndex() === idx ? store.config().lighting.accentColor : '#666'"
+               [style.box-shadow]="store.activeSectionIndex() === idx ? '0 0 10px ' + store.config().lighting.accentColor : 'none'">
+             <div class="timeline-line"></div>
+          </div>
+        </div>
+      }
+    </div>
+  }
+
+  <!-- Action Buttons -->
+  @if (!store.isCustomizing()) {
+    <div class="interactive absolute bottom-[180px] left-1/2 -translate-x-1/2 flex gap-5 z-30 pointer-events-auto">
+      @if (store.activeSection().id === 'drive') {
+        <button class="glass-btn engine-btn" 
+                (click)="playIgnition()"
+                [style.color]="store.config().lighting.accentColor" 
+                [style.border-color]="store.config().lighting.accentColor">
+          IGNITION START
+        </button>
+      }
+    </div>
+  }
+
+  <!-- Car Selector -->
+  @if (!store.isCustomizing() && store.activeSection().id !== 'drive' && store.activeSection().id !== 'walk') {
+    <div class="car-selector interactive absolute bottom-0 left-0 w-full flex justify-center pb-8 pt-12 bg-gradient-to-t from-black via-black/80 to-transparent z-40 pointer-events-auto">
+      <div class="flex gap-4 overflow-x-auto p-2 max-w-[90vw] md:max-w-full no-scrollbar">
+        @for (car of store.config().fleet; track car.id; let idx = $index) {
+          <div (click)="store.setCarIndex(idx)"
+               class="min-w-[100px] md:min-w-[140px] p-3 text-center rounded transition-all duration-300 cursor-pointer border bg-black/40 backdrop-blur-sm"
+               [style.background-color]="store.activeCarIndex() === idx ? car.color + '22' : 'rgba(20,20,20,0.6)'"
+               [style.border-color]="store.activeCarIndex() === idx ? 'white' : 'rgba(255,255,255,0.1)'"
+               [style.transform]="store.activeCarIndex() === idx ? 'translateY(-10px) scale(1.05)' : 'scale(1)'">
+            <span class="block text-[10px] md:text-xs font-bold tracking-widest text-white drop-shadow-md truncate">{{car.name}}</span>
+            <span class="block text-[8px] md:text-[9px] opacity-70 mt-1 text-white truncate">{{car.year}} // {{car.type}}</span>
+          </div>
+        }
+      </div>
+    </div>
+  }
+
+  <!-- Joystick -->
+  @if ((store.activeSection().id === 'drive' || store.activeSection().id === 'walk') && !store.isCustomizing()) {
+    <app-joystick class="pointer-events-auto"></app-joystick>
+  }
+
+  <!-- Admin Panel -->
+  @if (store.isAdminOpen()) {
+    <div class="admin-panel interactive fixed top-0 left-0 h-full w-[300px] bg-black/95 text-white z-[60] p-6 border-r border-zinc-800 backdrop-blur-xl overflow-y-auto slide-in pointer-events-auto">
+      <div class="flex justify-between items-center mb-6">
+         <h2 class="text-xl font-bold tracking-wider text-white">SYSTEM</h2>
+         <button (click)="store.isAdminOpen.set(false)" class="text-zinc-500 hover:text-white">✕</button>
+      </div>
+
+      <div class="space-y-6">
+        
+        <!-- Branding Config -->
+        <div class="p-4 bg-white/5 rounded space-y-3">
+            <h3 class="text-xs uppercase text-zinc-500 font-bold">Branding & Titles</h3>
+            <div>
+               <label class="text-[10px] text-zinc-400 mb-1 block">Brand Logo</label>
+               <input type="file" accept="image/*" (change)="onLogoSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
+            </div>
+            <div>
+               <label class="text-[10px] text-zinc-400 mb-1 block">Page Title</label>
+               <input type="text" [value]="store.config().texts.title" (input)="updatePageTitle($event)" class="w-full bg-zinc-800 border-none rounded p-1 text-xs text-white">
+            </div>
+        </div>
+
+        <!-- Hotspot Editor (Only in Tech or Interior) -->
+        @if (store.activeSection().id === 'cockpit' || store.activeSection().id === 'engineering') {
+          <div class="p-4 bg-blue-900/20 border border-blue-500/30 rounded">
+            <div class="flex justify-between items-center mb-2">
+              <label class="text-xs uppercase text-blue-400 font-bold">Hotspots</label>
+              <button class="text-[10px] bg-blue-500 text-black px-2 py-1 rounded font-bold"
+                      (click)="addPoint()">+ ADD POINT</button>
+            </div>
+            
+            <div class="space-y-2 mb-4">
+              @for (point of (store.activeSection().id === 'cockpit' ? store.activeCar().interiorPoints : store.activeCar().techPoints); track point.id) {
+                 <div class="text-xs bg-black/40 p-2 rounded flex justify-between cursor-pointer border"
+                      [style.border-color]="store.activeHotspotId() === point.id ? 'white' : 'transparent'"
+                      (click)="store.activeHotspotId.set(point.id)">
+                    <span>{{point.title}}</span>
+                    <button class="text-red-500" (click)="removePoint(point.id)">×</button>
+                 </div>
+              }
+            </div>
+
+            @if (store.activeHotspotId()) {
+               <div class="space-y-2 border-t border-zinc-700 pt-2">
+                  <input type="text" class="w-full bg-black border border-zinc-700 p-1 text-xs" placeholder="Title" 
+                         [value]="getPoint(store.activeHotspotId()!)?.title" (input)="updatePointTitle($event)">
+                  <textarea class="w-full bg-black border border-zinc-700 p-1 text-xs" placeholder="Desc"
+                            (input)="updatePointDesc($event)">{{getPoint(store.activeHotspotId()!)?.desc}}</textarea>
+                  
+                  <div class="grid grid-cols-3 gap-1">
+                    <input type="number" step="0.1" class="bg-zinc-800 text-[10px] p-1 text-center"
+                           [value]="getPoint(store.activeHotspotId()!)?.position?.[0]" (input)="updatePointPos($event, 0)">
+                    <input type="number" step="0.1" class="bg-zinc-800 text-[10px] p-1 text-center"
+                           [value]="getPoint(store.activeHotspotId()!)?.position?.[1]" (input)="updatePointPos($event, 1)">
+                    <input type="number" step="0.1" class="bg-zinc-800 text-[10px] p-1 text-center"
+                           [value]="getPoint(store.activeHotspotId()!)?.position?.[2]" (input)="updatePointPos($event, 2)">
+                  </div>
+               </div>
+            }
+          </div>
+        }
+
+        <!-- Active Car Details -->
+        <div class="p-4 bg-white/5 rounded space-y-3">
+          <div class="flex justify-between items-center">
+            <h3 class="text-xs uppercase text-zinc-500 font-bold">Active Car Details</h3>
+            <button (click)="saveCarData()" class="text-[10px] bg-green-600 text-white px-3 py-1 rounded font-bold hover:bg-green-500 transition">SAVE CAR CHANGES</button>
+          </div>
+          
+          <div>
+            <label class="text-[10px] text-zinc-400">Name</label>
+            <input type="text" [value]="store.activeCar().name" (input)="updateCarName($event)" 
+                   class="w-full bg-zinc-800 border-none rounded p-1 text-xs text-white">
+          </div>
+          <div>
+            <label class="text-[10px] text-zinc-400">Underglow Color</label>
+            <div class="flex gap-2">
+              <input type="color" [value]="store.activeCar().underglowColor || '#000000'" (input)="updateUnderglow($event)" class="h-6 w-full cursor-pointer">
+            </div>
+          </div>
+          
+           <div class="pt-2">
+             <label class="text-[10px] uppercase font-bold text-zinc-400 mb-1 block">Upload Model (.glb)</label>
+             <input #modelInput type="file" accept=".glb,.gltf" (click)="onFileInputClick($event)" (change)="onFileSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
+             <div class="text-[9px] text-zinc-500 mt-1">Parts automatically identified for Tech Mode</div>
+           </div>
+
+           <div>
+              <label class="text-[10px] uppercase font-bold text-zinc-400 mb-1 block">Ignition Sound (MP3/WAV)</label>
+              <input #ignInput type="file" accept="audio/*" (click)="onFileInputClick($event)" (change)="onIgnitionSoundSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
+           </div>
+           
+           <div>
+              <label class="text-[10px] uppercase font-bold text-zinc-400 mb-1 block">Drive Loop Sound (MP3/WAV)</label>
+              <input #driveInput type="file" accept="audio/*" (click)="onFileInputClick($event)" (change)="onDriveSoundSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
+           </div>
+        </div>
+        
+        <!-- Character Upload -->
+        <div class="p-4 bg-white/5 rounded space-y-3">
+            <h3 class="text-xs uppercase text-zinc-500 font-bold">Character</h3>
+            <div>
+               <label class="text-[10px] uppercase font-bold text-zinc-400 mb-1 block">Upload Avatar (.glb, .fbx)</label>
+               <input type="file" accept=".glb,.gltf,.fbx" (click)="onFileInputClick($event)" (change)="onCharacterFileSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
+               <div class="text-[9px] text-zinc-500 mt-1">Supports animated models</div>
+            </div>
+        </div>
+
+        <!-- Lighting & Environment -->
+        <div class="p-4 bg-white/5 rounded space-y-4">
+          <h3 class="text-xs uppercase text-zinc-500 font-bold">Environment</h3>
+
+          <div>
+            <label class="text-xs uppercase text-zinc-500 block mb-2 font-bold">Main Intensity</label>
+            <input type="range" min="0" max="3" step="0.1" 
+                  [value]="store.config().lighting.intensity" 
+                  (input)="updateLightIntensity($event)"
+                  class="w-full accent-white h-1 bg-zinc-700 rounded appearance-none cursor-pointer">
+          </div>
+
+          <div>
+            <label class="text-xs uppercase text-zinc-500 block mb-2 font-bold">System Accent</label>
+            <div class="flex gap-2">
+              <input type="color" [value]="store.config().lighting.accentColor" (input)="updateAccentColor($event)" class="bg-transparent border-none h-8 w-8 cursor-pointer">
+              <span class="text-xs font-mono self-center">{{store.config().lighting.accentColor}}</span>
+            </div>
+          </div>
+
+          <div>
+            <label class="text-xs uppercase text-zinc-500 block mb-2 font-bold">Floor Texture</label>
+            <input type="file" accept="image/*" (change)="onFloorTextureSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
+          </div>
+        </div>
+
+      </div>
+    </div>
+  }
+
+  <!-- Customizer Panel -->
+  @if (store.isCustomizing()) {
+    <div class="customizer-panel interactive absolute top-0 right-0 bottom-0 w-[350px] bg-black/90 border-l border-zinc-800 backdrop-blur-xl flex flex-col z-50 pointer-events-auto">
+      <div class="p-5 border-b border-zinc-800 flex justify-between items-center">
+        <h2 class="text-sm tracking-widest text-white m-0">BUILD YOUR OWN</h2>
+        <button (click)="store.isCustomizing.set(false)" class="text-zinc-500 hover:text-white">✕</button>
+      </div>
+      
+      <div class="flex-1 flex">
+        <!-- Categories -->
+        <div class="w-20 border-r border-zinc-800 flex flex-col items-center pt-5 gap-5">
+           @for (cat of store.activeCar().customization; track cat.id) {
+             <div class="w-12 h-12 rounded-full flex items-center justify-center cursor-pointer border border-white/10 transition hover:bg-white/10"
+                  [style.background]="activeCatId === cat.id ? store.config().lighting.accentColor : '#222'"
+                  (click)="activeCatId = cat.id">
+                <i class="fas" [class.fa-palette]="cat.type === 'COLOR'" [class.fa-eye-slash]="cat.type === 'GLASS'" [class.fa-cogs]="cat.type === 'MODEL'"
+                   [style.color]="activeCatId === cat.id ? 'black' : 'white'"></i>
+             </div>
+           }
+        </div>
+        <!-- Options -->
+        <div class="flex-1 p-5 overflow-y-auto">
+          @for (cat of store.activeCar().customization; track cat.id) {
+            @if (cat.id === activeCatId) {
+               <h3 class="text-xs text-zinc-500 uppercase mb-4">{{cat.name}}</h3>
+               <div class="flex flex-col gap-3">
+                 @for (opt of cat.options; track opt.id) {
+                   <div (click)="selectOption(cat.id, opt.id)"
+                        class="p-3 rounded cursor-pointer flex items-center gap-3 border transition"
+                        [class.bg-white-10]="store.customizationState()[cat.id] === opt.id"
+                        [class.bg-white-5]="store.customizationState()[cat.id] !== opt.id"
+                        [style.border-color]="store.customizationState()[cat.id] === opt.id ? store.config().lighting.accentColor : 'transparent'">
+                      @if (cat.type === 'COLOR') {
+                        <div class="w-5 h-5 rounded-full border border-white" [style.background]="opt.value"></div>
+                      }
+                      <span class="text-xs" [class.font-bold]="store.customizationState()[cat.id] === opt.id">{{opt.name}}</span>
+                   </div>
+                 }
+               </div>
+            }
+          }
+        </div>
+      </div>
+
+      <div class="p-5 border-t border-zinc-800">
+        <button class="glass-btn w-full text-center" (click)="store.isCustomizing.set(false)">FINISH BUILD</button>
+      </div>
+    </div>
+  }
+
+  <!-- Build Button -->
+  @if (!store.isCustomizing()) {
+    <div class="absolute top-10 left-1/2 -translate-x-1/2 pointer-events-auto">
+       <button class="glass-btn interactive font-bold text-xs py-3 px-8"
+               [style.border-color]="store.config().lighting.accentColor"
+               (click)="store.isCustomizing.set(true)">
+          BUILD YOUR OWN CAR
+       </button>
+    </div>
+  }
+</div>

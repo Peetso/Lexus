@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>LEXUS | EXPERIENCE AMAZING</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      :root {
+        --gold: #ffffff; /* Changed to White */
+        --dark: #0a0a0a;
+        --light: #f4f4f4;
+        --glass: rgba(20, 20, 20, 0.6);
+      }
+      body, html {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background-color: var(--dark);
+        font-family: 'Space Grotesk', sans-serif;
+        color: white;
+        touch-action: none; /* Prevent browser zooming/scrolling */
+      }
+      
+      /* UI Layer */
+      .ui-layer {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 10;
+        padding: 40px;
+        box-sizing: border-box;
+      }
+      .interactive { pointer-events: auto; }
+
+      /* Branding */
+      .branding {
+        position: absolute;
+        top: 40px;
+        left: 40px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        transition: all 0.3s ease;
+      }
+      
+      .lexus-logo {
+        width: 100px;
+        height: auto;
+        margin-bottom: 20px;
+        filter: invert(1) brightness(200%);
+        transition: width 0.3s;
+      }
+      
+      .header-meta h1 { 
+        font-size: clamp(1.5rem, 3vw, 2.5rem); 
+        font-weight: 300; 
+        margin: 0; 
+        letter-spacing: -1px;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+      .header-meta .sub { 
+        font-size: 0.6rem; 
+        letter-spacing: 3px; 
+        opacity: 0.8; 
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        display: block;
+        color: var(--gold);
+      }
+      .header-meta .desc { 
+        font-size: 0.8rem; 
+        letter-spacing: 0.5px; 
+        opacity: 0.6; 
+        margin-top: 10px;
+        font-weight: 300; 
+        max-width: 350px;
+        line-height: 1.4;
+        border-left: 1px solid var(--gold);
+        padding-left: 15px;
+      }
+
+      /* Section Navigation (Timeline) */
+      .timeline {
+        position: absolute;
+        right: 40px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 25px;
+      }
+      .timeline-item {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        opacity: 0.4;
+        transition: 0.3s;
+        cursor: pointer;
+      }
+      .timeline-item:hover { opacity: 0.8; }
+      .timeline-item.active { opacity: 1; }
+      
+      .timeline-text {
+        font-size: 9px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        text-align: right;
+      }
+      .timeline-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        position: relative;
+        transition: transform 0.3s;
+      }
+      .timeline-item.active .timeline-dot {
+        transform: scale(1.5);
+        background: var(--gold);
+      }
+      .timeline-line {
+        position: absolute;
+        right: 2px;
+        top: 8px;
+        width: 1px;
+        height: 25px; 
+        background: rgba(255,255,255,0.2);
+        z-index: -1;
+      }
+      .timeline-item:last-child .timeline-line { display: none; }
+
+      /* Footer Buttons - UPDATED: No Glow/Shadow */
+      .glass-btn {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.2);
+        color: inherit;
+        padding: 10px 20px;
+        border-radius: 4px;
+        font-family: inherit;
+        font-size: 9px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: 0.3s;
+        pointer-events: auto;
+        display: inline-block;
+        box-shadow: none !important; /* Strict removal */
+      }
+      .glass-btn:hover { background: var(--gold); border-color: var(--gold); color: black; }
+      
+      .engine-btn {
+        position: absolute;
+        bottom: 100px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid var(--gold);
+        color: var(--gold);
+        padding: 12px 24px;
+        font-weight: bold;
+        letter-spacing: 3px;
+        /* Animation removed */
+      }
+
+      /* Info Card for Car Parts */
+      .info-card {
+        position: absolute;
+        top: 50%;
+        right: 150px; 
+        transform: translateY(-50%);
+        width: 280px;
+        background: rgba(15, 20, 30, 0.95);
+        border: 1px solid var(--gold);
+        padding: 20px;
+        border-radius: 0;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.3s, transform 0.3s;
+        z-index: 80;
+      }
+      .info-card.visible { opacity: 1; transform: translateY(-50%) translateX(-20px); }
+      .info-card h4 { color: var(--gold); margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 2px; font-size: 1rem; }
+      .info-card p { font-size: 12px; line-height: 1.5; opacity: 0.8; margin: 0; }
+      
+      /* Hotspot Labels in 3D space usually managed via CSS2DObject, 
+         but for simplicity we might position divs or just rely on Three.js logic. 
+         Adding a style for potential HTML overlays if used */
+      .hotspot-label {
+        position: absolute;
+        background: rgba(0,0,0,0.8);
+        border: 1px solid white;
+        padding: 10px;
+        pointer-events: none;
+        transform: translate(-50%, -100%);
+        margin-top: -10px;
+        opacity: 0;
+        transition: opacity 0.3s;
+      }
+      .hotspot-label.visible { opacity: 1; }
+
+      /* Character Selection Popup */
+      .char-popup {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(10, 10, 10, 0.95);
+        border: 1px solid var(--gold);
+        padding: 40px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 30px;
+        z-index: 100;
+        backdrop-filter: blur(20px);
+      }
+      .char-options { display: flex; gap: 30px; }
+      .char-option {
+        width: 150px;
+        height: 200px;
+        border: 1px solid rgba(255,255,255,0.2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: 0.3s;
+        flex-direction: column;
+        gap: 15px;
+      }
+      .char-option:hover { border-color: var(--gold); background: rgba(255, 255, 255, 0.1); }
+      .char-icon { font-size: 40px; }
+
+      /* Mobile Rotate Overlay */
+      .mobile-rotate-overlay {
+        position: fixed;
+        inset: 0;
+        background: #050505;
+        z-index: 9999;
+        display: none; /* Controlled via media query */
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 30px;
+      }
+
+      .rotate-phone-icon {
+        font-size: 48px;
+        margin-bottom: 20px;
+        color: var(--gold);
+        animation: rotateIcon 2s infinite ease-in-out;
+      }
+
+      @keyframes rotateIcon {
+        0%, 10% { transform: rotate(0deg); }
+        40%, 60% { transform: rotate(90deg); }
+        90%, 100% { transform: rotate(90deg); }
+      }
+
+      /* Joystick Styles */
+      .joystick-zone {
+        position: absolute;
+        bottom: 40px;
+        left: 40px;
+        width: 120px;
+        height: 120px;
+        z-index: 50;
+        pointer-events: auto;
+        touch-action: none;
+      }
+      
+      .joystick-base {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        position: relative;
+        backdrop-filter: blur(5px);
+      }
+      
+      .joystick-stick {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.8);
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        /* Removed box shadow */
+        background: white; 
+      }
+
+      /* Responsive Adjustments */
+      .admin-panel, .customizer-panel {
+        width: 350px;
+        max-width: 100vw;
+      }
+
+      @media (max-width: 768px) and (orientation: portrait) {
+        .mobile-rotate-overlay { display: flex; }
+        /* Hide main UI elements when asking to rotate */
+        .ui-layer > *:not(.mobile-rotate-overlay) { display: none !important; }
+      }
+
+      /* Mobile Landscape & Tablet Optimization */
+      @media (max-width: 900px) {
+        .ui-layer { padding: 15px; }
+        
+        .branding { top: 15px; left: 15px; transform: scale(0.7); transform-origin: top left; }
+        .branding .lexus-logo { width: 50px; margin-bottom: 5px; }
+        .header-meta h1 { font-size: 1rem; }
+        .header-meta .sub { font-size: 0.5rem; letter-spacing: 1px; }
+        .header-meta .desc { display: none; }
+        
+        /* TIMELINE - Horizontal on mobile */
+        .timeline { 
+            position: absolute;
+            right: 0;
+            left: 0;
+            top: 70px; /* Below header */
+            transform: none;
+            display: flex;
+            flex-direction: row;
+            justify-content: center;
+            width: 100%;
+            gap: 20px;
+            pointer-events: auto;
+        }
+        
+        .timeline-item {
+            flex-direction: column-reverse; /* Text below dot */
+            gap: 6px;
+        }
+        
+        .timeline-line { display: none; }
+        
+        .timeline-text {
+            font-size: 7px;
+            letter-spacing: 1px;
+            text-align: center;
+        }
+        
+        .timeline-dot {
+            width: 5px;
+            height: 5px;
+        }
+        
+        .glass-btn {
+          padding: 6px 12px;
+          font-size: 8px;
+          letter-spacing: 1px;
+        }
+
+        /* Top Right Controls */
+        .interactive[style*="top: 40px"] {
+            top: 15px !important;
+            right: 15px !important;
+            gap: 8px;
+        }
+
+        /* Build Button */
+        .interactive[style*="left: 50%"] {
+            top: 15px !important;
+        }
+        
+        .admin-panel, .customizer-panel {
+          width: 100% !important;
+          border-left: none !important;
+          border-top: 1px solid #333;
+        }
+
+        /* Car Selector - Mobile Layout */
+        .car-selector {
+          /* Remove fixed brittle transforms */
+          width: 100% !important;
+          bottom: 0 !important;
+          left: 0 !important;
+          transform: none !important;
+          margin: 0 !important;
+          padding-bottom: 10px !important;
+        }
+        
+        .car-selector > div {
+             /* Wrapper adjustments */
+             padding: 0 10px !important;
+             max-width: 100vw !important;
+        }
+        
+        /* Adjust Engine/Ignition button position */
+        .engine-btn {
+          bottom: 15px !important;
+          right: 15px !important;
+          left: auto !important;
+          transform: none !important;
+          padding: 8px 16px;
+          font-size: 8px;
+        }
+
+        /* Info Card */
+        .info-card {
+            width: 180px;
+            right: 15px;
+            padding: 10px;
+        }
+        .info-card h4 { font-size: 0.7rem; margin-bottom: 4px; }
+        .info-card p { font-size: 9px; }
+        
+        /* Joystick scaling */
+        .joystick-zone {
+            bottom: 15px;
+            left: 15px;
+            width: 80px;
+            height: 80px;
+        }
+        .joystick-stick {
+            width: 30px;
+            height: 30px;
+        }
+      }
+
+      .scroll-hint {
+          position: absolute;
+          bottom: 20px;
+          left: 50%;
+          transform: translateX(-50%);
+          font-size: 9px;
+          letter-spacing: 2px;
+          opacity: 0.5;
+          text-transform: uppercase;
+          pointer-events: none;
+      }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "rxjs": "https://esm.sh/rxjs@^7.8.2?conditions=es2015",
+    "rxjs/operators": "https://esm.sh/rxjs@^7.8.2/operators?conditions=es2015",
+    "rxjs/ajax": "https://esm.sh/rxjs@^7.8.2/ajax?conditions=es2015",
+    "rxjs/webSocket": "https://esm.sh/rxjs@^7.8.2/webSocket?conditions=es2015",
+    "rxjs/testing": "https://esm.sh/rxjs@^7.8.2/testing?conditions=es2015",
+    "rxjs/fetch": "https://esm.sh/rxjs@^7.8.2/fetch?conditions=es2015",
+    "@angular/core": "https://esm.sh/@angular/core@^21.1.3?external=rxjs",
+    "@angular/common": "https://esm.sh/@angular/common@^21.1.3?external=rxjs",
+    "@angular/platform-browser": "https://esm.sh/@angular/platform-browser@^21.1.3?external=rxjs",
+    "@angular/compiler": "https://esm.sh/@angular/compiler@^21.1.3?external=rxjs",
+    "three/examples/jsm/controls/OrbitControls.js": "https://esm.sh/three@^0.182.0/examples/jsm/controls/OrbitControls.js?external=rxjs",
+    "three/examples/jsm/loaders/GLTFLoader.js": "https://esm.sh/three@^0.182.0/examples/jsm/loaders/GLTFLoader.js?external=rxjs",
+    "three/examples/jsm/loaders/FBXLoader.js": "https://esm.sh/three@^0.182.0/examples/jsm/loaders/FBXLoader.js?external=rxjs",
+    "three/examples/jsm/objects/Reflector.js": "https://esm.sh/three@^0.182.0/examples/jsm/objects/Reflector.js?external=rxjs",
+    "three": "https://esm.sh/three@^0.182.0?external=rxjs"
+  }
+}
+</script>
+</head>
+  <body>
+    <app-root></app-root>
+  </body>
+</html>
