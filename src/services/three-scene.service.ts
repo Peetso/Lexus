@@ -1,4 +1,5 @@
 
+
 import { Injectable, effect, inject } from '@angular/core';
 import * as THREE from 'three';
 import { StoreService } from './store.service';
@@ -6,7 +7,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
-import { EnvironmentItem } from './data.types';
+import { EnvironmentItem, CarConfig } from './data.types';
 
 interface CarMaterials {
   paint: THREE.MeshPhysicalMaterial;
@@ -24,9 +25,17 @@ export class ThreeSceneService {
   private renderer!: THREE.WebGLRenderer;
   private controls!: OrbitControls;
   
+  // Audio
+  private audioListener!: THREE.AudioListener;
+  private engineSound!: THREE.PositionalAudio;
+  private ignitionSound!: THREE.PositionalAudio;
+  private isEngineRunning = false;
+  private currentEngineSoundId: string | null = null;
+  
   // Loaders
   private gltfLoader = new GLTFLoader();
   private fbxLoader = new FBXLoader();
+  private audioLoader = new THREE.AudioLoader();
   
   // Scene Groups
   private fleetGroup = new THREE.Group(); 
@@ -44,7 +53,7 @@ export class ThreeSceneService {
   private isInitialized = false;
 
   // Environment State
-  private currentEnvId: string | null = null;
+  private envObjectMap = new Map<string, THREE.Object3D>();
 
   // Fleet Management
   private carMap = new Map<string, THREE.Group>(); 
@@ -102,12 +111,13 @@ export class ThreeSceneService {
        if (this.isInitialized) this.updateFloorTexture(url);
     });
     
-    // Watch Active Environment (Model Load & Transform)
+    // Watch Environments & Tint
     effect(() => {
-        const activeEnv = this.store.activeEnvironment();
+        const envs = this.store.config().environments;
         const tint = this.store.config().wallTint;
         if (this.isInitialized) {
-            this.updateEnvironment(activeEnv, tint);
+            this.syncEnvironments(envs);
+            this.applyWallTint(tint);
         }
     });
 
@@ -145,6 +155,8 @@ export class ThreeSceneService {
         if (section.id === 'showroom') {
             this.resetCameraToShowroom();
             this.charGroup.visible = false;
+            // Stop engine in showroom
+            this.stopEngine();
         } 
         else if (section.id === 'cockpit') {
             this.moveToInterior();
@@ -166,9 +178,22 @@ export class ThreeSceneService {
         this.renderHotspots();
     });
     
+    // Watch Active Car for Audio Updates
     effect(() => {
        const car = this.store.activeCar(); 
-       if (this.isInitialized) this.renderHotspots(); 
+       if (this.isInitialized) {
+           this.renderHotspots(); 
+           this.updateCarAudio(car);
+       }
+    });
+    
+    // Watch Mute State
+    effect(() => {
+        const muted = this.store.config().audio.muted;
+        const vol = this.store.config().audio.masterVolume;
+        if (this.isInitialized && this.audioListener) {
+            this.audioListener.setMasterVolume(muted ? 0 : vol);
+        }
     });
   }
 
@@ -184,6 +209,10 @@ export class ThreeSceneService {
 
     this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
     this.camera.position.set(6, 2, 7); 
+    
+    // Audio Listener
+    this.audioListener = new THREE.AudioListener();
+    this.camera.add(this.audioListener);
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -220,14 +249,102 @@ export class ThreeSceneService {
     this.syncFleet(config.fleet);
     
     // Initial Environment Load
-    this.updateEnvironment(this.store.activeEnvironment(), config.wallTint);
+    this.syncEnvironments(config.environments);
+    this.applyWallTint(config.wallTint);
     
     this.updateFloorTexture(config.floorTextureUrl);
+    
+    // Audio Init
+    this.engineSound = new THREE.PositionalAudio(this.audioListener);
+    this.ignitionSound = new THREE.PositionalAudio(this.audioListener);
+    this.engineSound.setRefDistance(5);
+    this.engineSound.setRolloffFactor(1);
+    this.ignitionSound.setRefDistance(5);
+    this.updateCarAudio(this.store.activeCar());
 
     this.animate();
     
     window.addEventListener('resize', this.onResize.bind(this));
   }
+  
+  // --- Audio Logic ---
+  
+  private updateCarAudio(car: CarConfig) {
+      if (!this.audioListener) return;
+      
+      const activeGroup = this.carMap.get(car.id);
+      
+      // Detach from previous parent if needed (though we'll reattach to new active group)
+      if (this.engineSound.parent) this.engineSound.parent.remove(this.engineSound);
+      if (this.ignitionSound.parent) this.ignitionSound.parent.remove(this.ignitionSound);
+
+      if (activeGroup) {
+          activeGroup.add(this.engineSound);
+          activeGroup.add(this.ignitionSound);
+      }
+
+      // Load buffers if URLs present
+      if (car.driveSoundUrl && this.currentEngineSoundId !== car.id) {
+          if (this.engineSound.isPlaying) this.engineSound.stop();
+          this.audioLoader.load(car.driveSoundUrl, (buffer) => {
+              this.currentEngineSoundId = car.id; // Update tracked ID
+              this.engineSound.setBuffer(buffer);
+              this.engineSound.setLoop(true);
+              this.engineSound.setVolume(0.5);
+              // If we were running, restart? No, better wait for ignition.
+          });
+      }
+      
+      if (car.ignitionSoundUrl) {
+          this.audioLoader.load(car.ignitionSoundUrl, (buffer) => {
+              this.ignitionSound.setBuffer(buffer);
+              this.ignitionSound.setLoop(false);
+              this.ignitionSound.setVolume(1.0);
+          });
+      }
+  }
+
+  public async toggleIgnition() {
+      if (this.audioListener.context.state === 'suspended') {
+          await this.audioListener.context.resume();
+      }
+
+      if (this.isEngineRunning) {
+          this.stopEngine();
+      } else {
+          this.startEngine();
+      }
+  }
+
+  private startEngine() {
+      if (this.isEngineRunning) return;
+      
+      if (this.ignitionSound.buffer) {
+          if (this.ignitionSound.isPlaying) this.ignitionSound.stop();
+          this.ignitionSound.play();
+          
+          this.ignitionSound.onEnded = () => {
+             if (this.engineSound.buffer && !this.engineSound.isPlaying) {
+                 this.engineSound.play();
+             }
+          };
+      } else if (this.engineSound.buffer) {
+          this.engineSound.play();
+      }
+      
+      this.isEngineRunning = true;
+  }
+
+  public stopEngine() {
+      if (!this.isEngineRunning) return;
+      
+      if (this.engineSound.isPlaying) this.engineSound.stop();
+      if (this.ignitionSound.isPlaying) this.ignitionSound.stop();
+      this.isEngineRunning = false;
+      this.speed = 0; // Kill speed
+  }
+
+  // ---
 
   private onResize() {
     if (!this.camera || !this.renderer) return;
@@ -250,32 +367,66 @@ export class ThreeSceneService {
 
   // --- Environment Logic ---
   
-  private updateEnvironment(env: EnvironmentItem | undefined, tint: number) {
-      // 1. Update Tint (Always apply)
-      this.applyWallTint(tint);
+  private syncEnvironments(envs: EnvironmentItem[]) {
+      const currentIds = new Set(this.envObjectMap.keys());
+      const newIds = new Set(envs.map(e => e.id));
 
-      // 2. Check if we need to load a new model
-      if (env?.id !== this.currentEnvId) {
-          this.currentEnvId = env?.id || null;
-          this.wallModelGroup.clear();
-
-          if (env && env.url) {
-              this.gltfLoader.load(env.url, (gltf) => {
-                  const model = gltf.scene;
-                  // Store reference for transforms
-                  this.wallModelGroup.add(model);
-                  this.applyEnvironmentTransform(env, model);
-              });
+      // 1. Remove deleted
+      for (const id of currentIds) {
+          if (!newIds.has(id)) {
+              const obj = this.envObjectMap.get(id);
+              if (obj) {
+                  this.wallModelGroup.remove(obj);
+                  // Dispose logic if needed
+              }
+              this.envObjectMap.delete(id);
           }
-      } else if (env && this.wallModelGroup.children.length > 0) {
-          // 3. Just update transform if model exists
-          this.applyEnvironmentTransform(env, this.wallModelGroup.children[0]);
+      }
+
+      // 2. Add or Update
+      for (const env of envs) {
+          if (this.envObjectMap.has(env.id)) {
+              // Update existing
+              const anchor = this.envObjectMap.get(env.id)!;
+              this.applyEnvironmentTransform(env, anchor);
+          } else {
+              // New
+              this.loadEnvironmentModel(env);
+          }
       }
   }
+
+  private loadEnvironmentModel(env: EnvironmentItem) {
+      if (!env.url) return;
+
+      const anchor = new THREE.Group();
+      anchor.name = env.id;
+      this.applyEnvironmentTransform(env, anchor);
+      
+      this.envObjectMap.set(env.id, anchor);
+      this.wallModelGroup.add(anchor);
+
+      this.gltfLoader.load(env.url, (gltf) => {
+          // Verify anchor still exists (wasn't deleted during load)
+          if (this.envObjectMap.has(env.id)) {
+              const model = gltf.scene;
+              
+              // Enable shadows for environment
+              model.traverse((child: any) => {
+                  if (child.isMesh) {
+                      child.castShadow = true;
+                      child.receiveShadow = true;
+                  }
+              });
+
+              anchor.add(model);
+          }
+      });
+  }
   
-  private applyEnvironmentTransform(env: EnvironmentItem, model: THREE.Object3D) {
-      model.scale.set(env.scale, env.scale, env.scale);
-      model.position.set(env.position[0], env.position[1], env.position[2]);
+  private applyEnvironmentTransform(env: EnvironmentItem, obj: THREE.Object3D) {
+      obj.scale.set(env.scale, env.scale, env.scale);
+      obj.position.set(env.position[0], env.position[1], env.position[2]);
   }
 
   // --- Fleet Logic ---
@@ -333,6 +484,12 @@ export class ThreeSceneService {
              activeGroup.add(this.underglowLight);
           }
           this.underglowLight.color.set(activeCar.underglowColor || activeCar.color);
+          
+          // Re-attach audio to new active car
+          if (this.engineSound && this.ignitionSound) {
+             activeGroup.add(this.engineSound);
+             activeGroup.add(this.ignitionSound);
+          }
       }
   }
 
@@ -842,6 +999,15 @@ export class ThreeSceneService {
     const joystick = this.store.joystickState();
     const activeCarConfig = this.store.activeCar();
     const activeGroup = this.carMap.get(activeCarConfig.id);
+    
+    // --- Audio Pitch Modulation ---
+    if (this.isEngineRunning && this.engineSound && this.engineSound.isPlaying) {
+        // Simple pitch shift: 0.5 (idle) to 1.5 (high speed)
+        // Normalized speed approx 0 to 80
+        const normalizedSpeed = Math.abs(this.speed) / 80;
+        const targetRate = 0.8 + (normalizedSpeed * 0.8);
+        this.engineSound.setPlaybackRate(targetRate);
+    }
 
     // --- LINEUP LOGIC ---
     if (section.id !== 'drive' && section.id !== 'walk') {

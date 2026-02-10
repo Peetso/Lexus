@@ -4,6 +4,7 @@ import { CommonModule } from '@angular/common';
 import { CanvasViewerComponent } from './components/canvas-viewer.component';
 import { JoystickComponent } from './components/joystick.component';
 import { StoreService } from './services/store.service';
+import { ThreeSceneService } from './services/three-scene.service'; // Added explicit import
 import { Hotspot, EnvironmentItem } from './services/data.types';
 
 @Component({
@@ -17,12 +18,13 @@ import { Hotspot, EnvironmentItem } from './services/data.types';
 })
 export class AppComponent implements OnInit {
   store = inject(StoreService);
+  threeService = inject(ThreeSceneService); // Inject ThreeService
   activeCatId = 'color';
   showFsOverlay = false;
   private hasDismissedFs = false;
   
   private keyBuffer = '';
-  private currentDriveAudio: HTMLAudioElement | null = null;
+  // Removed local audio variables
 
   ngOnInit() {
     this.checkMobileAndFullscreen();
@@ -96,26 +98,8 @@ export class AppComponent implements OnInit {
   }
 
   playIgnition() {
-    if (this.currentDriveAudio) {
-        this.currentDriveAudio.pause();
-        this.currentDriveAudio = null;
-    }
-
-    const car = this.store.activeCar();
-    if (car.ignitionSoundUrl && !this.store.config().audio.muted) {
-        const audio = new Audio(car.ignitionSoundUrl);
-        audio.volume = this.store.config().audio.masterVolume;
-        audio.play().catch(e => console.warn('Audio play failed', e));
-        
-        if (car.driveSoundUrl) {
-            audio.onended = () => {
-                this.currentDriveAudio = new Audio(car.driveSoundUrl);
-                this.currentDriveAudio.loop = true;
-                this.currentDriveAudio.volume = this.store.config().audio.masterVolume * 0.5;
-                this.currentDriveAudio.play().catch(e => console.warn('Drive audio failed', e));
-            };
-        }
-    }
+    // Delegate to ThreeSceneService for 3D Audio
+    this.threeService.toggleIgnition();
   }
 
   selectOption(catId: string, optId: string) {
