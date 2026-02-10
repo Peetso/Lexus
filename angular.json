@@ -34,10 +34,7 @@
         "serve": {
           "builder": "@angular/build:dev-server",
           "options": {
-            "port": 3000,
-            "allowedHosts": [
-              "peter-adel.taila6a2b4.ts.net"
-            ]
+            "port": 3000
           },
           "configurations": {
             "production": {
@@ -51,8 +48,5 @@
         }
       }
     }
-  },
-  "cli": {
-    "analytics": "c6065e73-b907-42ab-9b97-347ccae4aaa9"
   }
 }

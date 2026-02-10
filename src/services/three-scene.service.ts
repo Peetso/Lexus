@@ -1,3 +1,4 @@
+
 import { Injectable, effect, inject } from '@angular/core';
 import * as THREE from 'three';
 import { StoreService } from './store.service';
@@ -5,6 +6,13 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
+
+interface CarMaterials {
+  paint: THREE.MeshPhysicalMaterial;
+  glass: THREE.MeshPhysicalMaterial;
+  rubber: THREE.MeshStandardMaterial;
+  chrome: THREE.MeshStandardMaterial;
+}
 
 @Injectable({ providedIn: 'root' })
 export class ThreeSceneService {
@@ -32,6 +40,9 @@ export class ThreeSceneService {
   // We store a group for each car configuration ID
   private carMap = new Map<string, THREE.Group>(); 
   
+  // We store unique materials for each car ID
+  private materialsMap = new Map<string, CarMaterials>();
+
   // References to the currently active physics object
   private currentCarParams = {
       wheels: [] as THREE.Object3D[],
@@ -59,17 +70,17 @@ export class ThreeSceneService {
   // Procedural Character Refs (for manual animation)
   private charMeshes: { [key: string]: THREE.Object3D } = {}; 
   
-  // Materials - Reusable
-  private paintMaterial = new THREE.MeshPhysicalMaterial({ 
+  // Base Material Templates (Used to clone)
+  private basePaint = new THREE.MeshPhysicalMaterial({ 
     color: 0xffffff, metalness: 0.6, roughness: 0.1, clearcoat: 1.0, clearcoatRoughness: 0.05
   });
-  private glassMaterial = new THREE.MeshPhysicalMaterial({
+  private baseGlass = new THREE.MeshPhysicalMaterial({
     color: 0x000000, metalness: 0.9, roughness: 0.0, transmission: 0.1, transparent: true, opacity: 0.8
   });
-  private rubberMaterial = new THREE.MeshStandardMaterial({ 
+  private baseRubber = new THREE.MeshStandardMaterial({ 
       color: 0x111111, roughness: 0.9, metalness: 0.1 
   });
-  private chromeMaterial = new THREE.MeshStandardMaterial({ 
+  private baseChrome = new THREE.MeshStandardMaterial({ 
       color: 0xffffff, metalness: 0.95, roughness: 0.05 
   });
 
@@ -95,10 +106,6 @@ export class ThreeSceneService {
       // Whenever fleet config changes (or active index), we ensure cars are built
       const fleet = this.store.config().fleet;
       this.syncFleet(fleet);
-      
-      // Update Materials for the active car specifically (in case of color change)
-      const activeCar = this.store.activeCar();
-      this.updateActiveCarMaterials(activeCar);
     });
 
     // 3. Character Updates
@@ -222,6 +229,23 @@ export class ThreeSceneService {
 
   // --- Fleet Logic ---
 
+  private getOrCreateMaterials(carId: string): CarMaterials {
+    if (this.materialsMap.has(carId)) {
+        return this.materialsMap.get(carId)!;
+    }
+    
+    // Create unique materials for this car
+    const mats: CarMaterials = {
+        paint: this.basePaint.clone(),
+        glass: this.baseGlass.clone(),
+        rubber: this.baseRubber.clone(),
+        chrome: this.baseChrome.clone()
+    };
+    
+    this.materialsMap.set(carId, mats);
+    return mats;
+  }
+
   private syncFleet(fleet: any[]) {
       // 1. Remove cars not in fleet or if Model URL changed
       const currentIds = Array.from(this.carMap.keys());
@@ -245,11 +269,23 @@ export class ThreeSceneService {
           if (shouldRemove) {
               this.fleetGroup.remove(group);
               this.carMap.delete(id);
+              // Clean up materials
+              this.materialsMap.get(id)?.paint.dispose();
+              this.materialsMap.get(id)?.glass.dispose();
+              this.materialsMap.get(id)?.rubber.dispose();
+              this.materialsMap.get(id)?.chrome.dispose();
+              this.materialsMap.delete(id);
           }
       });
 
       // 2. Add/Update cars
       fleet.forEach((carConfig, index) => {
+          // Ensure materials exist and are up to date
+          const mats = this.getOrCreateMaterials(carConfig.id);
+          mats.paint.color.set(carConfig.color);
+          mats.paint.metalness = carConfig.metalness;
+          mats.paint.roughness = carConfig.roughness;
+
           if (!this.carMap.has(carConfig.id)) {
               this.createCarGroup(carConfig);
           }
@@ -294,13 +330,16 @@ export class ThreeSceneService {
               model.position.sub(center.multiplyScalar(scaleFactor));
               model.position.y += (size.y * scaleFactor * 0.5); 
               
+              // Apply specific materials for this car
+              const mats = this.getOrCreateMaterials(carConfig.id);
+              
               model.traverse((child: any) => {
                   if (child.isMesh) {
                       child.castShadow = true;
                       child.receiveShadow = true;
                       // Store original pos in userData for explosion
                       child.userData['origPos'] = child.position.clone();
-                      this.applyAutoMaterials(child, carConfig);
+                      this.applyAutoMaterials(child, mats);
                   }
               });
 
@@ -321,9 +360,11 @@ export class ThreeSceneService {
   }
 
   private buildProceduralCar(group: THREE.Group, config: any) {
+      const mats = this.getOrCreateMaterials(config.id);
+
       // Body
       const bodyGeo = new THREE.BoxGeometry(2, 0.5, 4.6);
-      const body = new THREE.Mesh(bodyGeo, this.paintMaterial); // Will be overridden by active mat updates
+      const body = new THREE.Mesh(bodyGeo, mats.paint); 
       body.position.set(0, 0.5, 0);
       body.name = "procedural_body";
       body.castShadow = true;
@@ -332,7 +373,7 @@ export class ThreeSceneService {
 
       // Cabin
       const cabinGeo = new THREE.SphereGeometry(1.2, 32, 16);
-      const cabin = new THREE.Mesh(cabinGeo, this.glassMaterial);
+      const cabin = new THREE.Mesh(cabinGeo, mats.glass);
       cabin.scale.set(0.9, 0.4, 1.5); 
       cabin.position.set(0, 1.0, -0.2);
       cabin.name = "procedural_glass";
@@ -342,13 +383,14 @@ export class ThreeSceneService {
 
       // Wheels
       const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.35, 32);
-      const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+      
       const positions = [[-1.1, 0.4, 1.6], [1.1, 0.4, 1.6], [-1.2, 0.42, -1.6], [1.2, 0.42, -1.6]];
 
       positions.forEach(pos => {
           const wGroup = new THREE.Group();
           wGroup.position.set(pos[0], pos[1], pos[2]);
-          const t = new THREE.Mesh(wheelGeo, wheelMat); 
+          // Use specific rubber material
+          const t = new THREE.Mesh(wheelGeo, mats.rubber); 
           t.rotation.z = Math.PI/2; 
           t.castShadow = true; 
           t.name = "procedural_wheel";
@@ -356,21 +398,18 @@ export class ThreeSceneService {
           wGroup.userData['origPos'] = wGroup.position.clone();
           group.add(wGroup);
       });
-      
-      // Initial Color Set
-      this.updateActiveCarMaterials(config);
   }
 
-  private applyAutoMaterials(mesh: THREE.Mesh, config: any) {
+  private applyAutoMaterials(mesh: THREE.Mesh, mats: CarMaterials) {
       const lowerName = mesh.name.toLowerCase();
       if (lowerName.includes('body') || lowerName.includes('paint') || lowerName.includes('chassis')) {
-           mesh.material = this.paintMaterial;
+           mesh.material = mats.paint;
       } else if (lowerName.includes('glass') || lowerName.includes('window')) {
-           mesh.material = this.glassMaterial;
+           mesh.material = mats.glass;
       } else if (lowerName.includes('tire') || lowerName.includes('rubber')) {
-           mesh.material = this.rubberMaterial;
+           mesh.material = mats.rubber;
       } else if (lowerName.includes('rim') || lowerName.includes('chrome')) {
-           mesh.material = this.chromeMaterial;
+           mesh.material = mats.chrome;
       }
   }
 
@@ -386,11 +425,7 @@ export class ThreeSceneService {
               
               // Identify wheels
               const lower = obj.name.toLowerCase();
-              // For procedural: parent group is the wheel pivot. For GLB: usually Mesh or Parent Group.
-              // Logic: If it looks like a wheel, add it.
               if (lower.includes('wheel') || lower.includes('rim') || lower.includes('tire')) {
-                  // Avoid adding child parts of wheel, just the pivot
-                  // Simple heuristic: If parent is the main Car Group, it's a main part.
                   if (obj.parent === group) {
                        this.currentCarParams.wheels.push(obj);
                   }
@@ -400,16 +435,6 @@ export class ThreeSceneService {
       
       // Sort wheels: Front (positive Z) first
       this.currentCarParams.wheels.sort((a, b) => b.position.z - a.position.z);
-  }
-
-  private updateActiveCarMaterials(car: any) {
-      this.paintMaterial.color.set(car.color);
-      this.paintMaterial.metalness = car.metalness;
-      this.paintMaterial.roughness = car.roughness;
-      
-      if (this.underglowLight) {
-          this.underglowLight.color.set(car.underglowColor || car.color);
-      }
   }
 
   private renderHotspots() {
