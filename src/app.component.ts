@@ -4,7 +4,7 @@ import { CommonModule } from '@angular/common';
 import { CanvasViewerComponent } from './components/canvas-viewer.component';
 import { JoystickComponent } from './components/joystick.component';
 import { StoreService } from './services/store.service';
-import { Hotspot } from './services/data.types';
+import { Hotspot, EnvironmentItem } from './services/data.types';
 
 @Component({
   selector: 'app-root',
@@ -22,6 +22,7 @@ export class AppComponent implements OnInit {
   private hasDismissedFs = false;
   
   private keyBuffer = '';
+  private currentDriveAudio: HTMLAudioElement | null = null;
 
   ngOnInit() {
     this.checkMobileAndFullscreen();
@@ -39,11 +40,9 @@ export class AppComponent implements OnInit {
     }
     
     const isMobileWidth = window.innerWidth < 900;
-    // Check standard and vendor-prefixed fullscreen elements
     const doc = document as any;
     const isFullscreen = !!(doc.fullscreenElement || doc.webkitFullscreenElement || doc.msFullscreenElement);
     
-    // Only show if mobile width AND not currently in fullscreen
     this.showFsOverlay = isMobileWidth && !isFullscreen;
   }
   
@@ -66,13 +65,11 @@ export class AppComponent implements OnInit {
     const requestFs = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.msRequestFullscreen;
     
     if (requestFs) {
-      // Return type might be Promise or void depending on browser
       Promise.resolve(requestFs.call(elem)).catch(err => {
           console.warn('Fullscreen error:', err);
       });
     }
     
-    // Always hide overlay on interaction
     this.showFsOverlay = false;
   }
 
@@ -81,7 +78,6 @@ export class AppComponent implements OnInit {
     this.showFsOverlay = false;
   }
 
-  // --- Confirmation Helpers ---
   confirmAction(message: string): boolean {
     return window.confirm(message);
   }
@@ -99,8 +95,12 @@ export class AppComponent implements OnInit {
       }
   }
 
-  // Audio Logic
   playIgnition() {
+    if (this.currentDriveAudio) {
+        this.currentDriveAudio.pause();
+        this.currentDriveAudio = null;
+    }
+
     const car = this.store.activeCar();
     if (car.ignitionSoundUrl && !this.store.config().audio.muted) {
         const audio = new Audio(car.ignitionSoundUrl);
@@ -109,10 +109,10 @@ export class AppComponent implements OnInit {
         
         if (car.driveSoundUrl) {
             audio.onended = () => {
-                const drive = new Audio(car.driveSoundUrl);
-                drive.loop = true;
-                drive.volume = this.store.config().audio.masterVolume * 0.5;
-                drive.play().catch(e => console.warn('Drive audio failed', e));
+                this.currentDriveAudio = new Audio(car.driveSoundUrl);
+                this.currentDriveAudio.loop = true;
+                this.currentDriveAudio.volume = this.store.config().audio.masterVolume * 0.5;
+                this.currentDriveAudio.play().catch(e => console.warn('Drive audio failed', e));
             };
         }
     }
@@ -139,12 +139,6 @@ export class AppComponent implements OnInit {
     this.store.updateConfig({ lighting });
   }
 
-  updateAmbientIntensity(e: Event) {
-    const val = parseFloat((e.target as HTMLInputElement).value);
-    const lighting = { ...this.store.config().lighting, ambient: val };
-    this.store.updateConfig({ lighting });
-  }
-
   updateAccentColor(e: Event) {
     const val = (e.target as HTMLInputElement).value;
     const lighting = { ...this.store.config().lighting, accentColor: val };
@@ -166,8 +160,75 @@ export class AppComponent implements OnInit {
     const underglowColor = (e.target as HTMLInputElement).value;
     this.store.updateActiveCar({ underglowColor });
   }
+  
+  updateWallTint(e: Event) {
+    const val = parseFloat((e.target as HTMLInputElement).value);
+    this.store.updateConfig({ wallTint: val });
+  }
 
-  // File Handlers using persistent storage
+  updateCharacterScale(e: Event) {
+    const val = parseFloat((e.target as HTMLInputElement).value);
+    this.store.updateCharacter({ scale: val });
+  }
+  
+  updateQuality(e: Event) {
+      const val = (e.target as HTMLSelectElement).value as 'high' | 'low';
+      this.store.updateConfig({ renderQuality: val });
+  }
+
+  updateUiOffset(btn: 'buildBtn' | 'ignitionBtn', axis: 'x' | 'y', e: Event) {
+      const val = parseFloat((e.target as HTMLInputElement).value);
+      const current = this.store.config().uiOffsets;
+      const newOffsets = {
+          ...current,
+          [btn]: {
+              ...current[btn],
+              [axis]: val
+          }
+      };
+      this.store.updateConfig({ uiOffsets: newOffsets });
+  }
+  
+  // Environment Controls
+  async onEnvironmentUpload(event: any) {
+    const file = event.target.files[0];
+    if (file) {
+        const { id, url } = await this.store.uploadFile(file);
+        const newEnv: EnvironmentItem = {
+            id: crypto.randomUUID(),
+            name: file.name.replace('.glb', '').replace('.gltf', ''),
+            url,
+            assetId: id,
+            scale: 100, // Default big scale
+            position: [0, -20, 0]
+        };
+        this.store.addEnvironment(newEnv);
+    }
+  }
+
+  updateEnvScale(e: Event) {
+      const active = this.store.activeEnvironment();
+      if (!active) return;
+      const val = parseFloat((e.target as HTMLInputElement).value);
+      this.store.updateEnvironment(active.id, { scale: val });
+  }
+  
+  updateEnvPos(e: Event, idx: number) {
+      const active = this.store.activeEnvironment();
+      if (!active) return;
+      const val = parseFloat((e.target as HTMLInputElement).value);
+      const newPos = [...active.position] as [number, number, number];
+      newPos[idx] = val;
+      this.store.updateEnvironment(active.id, { position: newPos });
+  }
+  
+  removeEnvironment(id: string) {
+      if (this.confirmAction('Delete this environment model?')) {
+          this.store.removeEnvironment(id);
+      }
+  }
+
+  // File Handlers
   async onLogoSelected(event: any) {
     const file = event.target.files[0];
     if (file) {

@@ -1,6 +1,6 @@
 
 import { Injectable, signal, computed, effect, inject } from '@angular/core';
-import { AppConfig, DEFAULT_CONFIG, CarConfig, Hotspot } from './data.types';
+import { AppConfig, DEFAULT_CONFIG, CarConfig, Hotspot, EnvironmentItem } from './data.types';
 import { DbService } from './db.service';
 
 @Injectable({ providedIn: 'root' })
@@ -14,6 +14,10 @@ export class StoreService {
   activeCarIndex = computed(() => this.config().activeCarIndex);
   activeCar = computed(() => this.config().fleet[this.activeCarIndex()] || this.config().fleet[0]);
   sections = computed(() => this.config().sections);
+  
+  activeEnvironment = computed(() => 
+    this.config().environments.find(e => e.id === this.config().activeEnvironmentId)
+  );
   
   // Runtime State
   activeSectionIndex = signal(0);
@@ -30,21 +34,25 @@ export class StoreService {
   constructor() {
       this.initializeData();
 
-      // Auto-save Global Settings ONLY (Lighting, Audio, UI)
-      // Car changes are now manual via saveCurrentCar()
+      // Auto-save Global Settings
       effect(() => {
           const current = this.config();
           const globalSettings = {
              lighting: current.lighting,
              audio: current.audio,
              texts: current.texts,
-             character: current.character, // Character is global for now
+             character: current.character, 
              logoAssetId: current.logoAssetId,
              floorTextureAssetId: current.floorTextureAssetId,
+             
+             // Environment settings
+             environments: current.environments.map(e => ({...e, url: undefined})), // Don't save blob URLs to localstorage
+             activeEnvironmentId: current.activeEnvironmentId,
+
              activeCarIndex: current.activeCarIndex
           };
           try {
-              localStorage.setItem('lexus_global_settings_v2', JSON.stringify(globalSettings));
+              localStorage.setItem('lexus_global_settings_v4', JSON.stringify(globalSettings));
           } catch (e) {
               console.warn('Failed to save settings', e);
           }
@@ -55,27 +63,26 @@ export class StoreService {
       // 1. Load Global Settings
       let loadedConfig = { ...DEFAULT_CONFIG };
       try {
-          const savedSettings = localStorage.getItem('lexus_global_settings_v2');
+          const savedSettings = localStorage.getItem('lexus_global_settings_v4');
           if (savedSettings) {
               const parsed = JSON.parse(savedSettings);
               loadedConfig = { ...loadedConfig, ...parsed };
+              // Ensure default environments array if missing
+              if (!loadedConfig.environments) loadedConfig.environments = [];
           }
       } catch (e) { console.warn('Settings load error', e); }
 
       // 2. Load Cars from DB
       const dbCars = await this.db.getAllCars();
       if (dbCars.length > 0) {
-          // Merge DB cars into fleet
-          // We respect the ID order if possible, or just replace fleet
           loadedConfig.fleet = dbCars;
       } else {
-          // First time? Seed DB with defaults
           for (const car of DEFAULT_CONFIG.fleet) {
               await this.db.saveCar(car);
           }
       }
 
-      // 3. Hydrate Blobs (Images/Models)
+      // 3. Hydrate Blobs
       await this.hydrateGlobalAssets(loadedConfig);
       await this.hydrateFleetAssets(loadedConfig.fleet);
 
@@ -97,6 +104,16 @@ export class StoreService {
       if (conf.character.modelAssetId) {
           const blob = await this.db.getAsset(conf.character.modelAssetId);
           if (blob) conf.character.modelUrl = URL.createObjectURL(blob);
+      }
+      
+      // Hydrate Environments
+      if (conf.environments) {
+          for (const env of conf.environments) {
+              if (env.assetId) {
+                  const blob = await this.db.getAsset(env.assetId);
+                  if (blob) env.url = URL.createObjectURL(blob);
+              }
+          }
       }
   }
 
@@ -130,7 +147,6 @@ export class StoreService {
   async saveCurrentCar() {
       const car = this.activeCar();
       await this.db.saveCar(car);
-      // We also update the signal to ensure consistency, though it should be in sync
       console.log('Car Saved to DB:', car.name);
   }
 
@@ -156,6 +172,37 @@ export class StoreService {
       fleet[c.activeCarIndex] = { ...fleet[c.activeCarIndex], ...updates };
       return { ...c, fleet };
     });
+  }
+  
+  // Environment Actions
+  addEnvironment(env: EnvironmentItem) {
+      this.config.update(c => ({
+          ...c,
+          environments: [...c.environments, env],
+          activeEnvironmentId: env.id
+      }));
+  }
+  
+  setActiveEnvironment(id: string) {
+      this.updateConfig({ activeEnvironmentId: id });
+  }
+  
+  updateEnvironment(id: string, updates: Partial<EnvironmentItem>) {
+      this.config.update(c => ({
+          ...c,
+          environments: c.environments.map(e => e.id === id ? { ...e, ...updates } : e)
+      }));
+  }
+  
+  removeEnvironment(id: string) {
+      this.config.update(c => {
+          const newEnvs = c.environments.filter(e => e.id !== id);
+          return {
+              ...c,
+              environments: newEnvs,
+              activeEnvironmentId: c.activeEnvironmentId === id ? (newEnvs[0]?.id || null) : c.activeEnvironmentId
+          };
+      });
   }
   
   addHotspot(type: 'interiorPoints' | 'techPoints') {

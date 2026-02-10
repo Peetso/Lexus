@@ -70,14 +70,16 @@
     </div>
   }
 
-  <!-- Action Buttons -->
+  <!-- Action Buttons (Drive Mode) -->
   @if (!store.isCustomizing()) {
-    <div class="interactive absolute bottom-[180px] left-1/2 -translate-x-1/2 flex gap-5 z-30 pointer-events-auto">
+    <div class="interactive absolute left-1/2 flex gap-5 z-30 pointer-events-auto"
+         style="bottom: 40px; transform: translateX(-50%)">
       @if (store.activeSection().id === 'drive') {
         <button class="glass-btn engine-btn" 
                 (click)="playIgnition()"
                 [style.color]="store.config().lighting.accentColor" 
-                [style.border-color]="store.config().lighting.accentColor">
+                [style.border-color]="store.config().lighting.accentColor"
+                [style.transform]="'translate(' + store.config().uiOffsets.ignitionBtn.x + 'px, ' + store.config().uiOffsets.ignitionBtn.y + 'px)'">
           IGNITION START
         </button>
       }
@@ -119,7 +121,7 @@
         
         <!-- Branding Config -->
         <div class="p-4 bg-white/5 rounded space-y-3">
-            <h3 class="text-xs uppercase text-zinc-500 font-bold">Branding & Titles</h3>
+            <h3 class="text-xs uppercase text-zinc-500 font-bold">Branding & UI</h3>
             <div>
                <label class="text-[10px] text-zinc-400 mb-1 block">Brand Logo</label>
                <input type="file" accept="image/*" (change)="onLogoSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
@@ -128,6 +130,79 @@
                <label class="text-[10px] text-zinc-400 mb-1 block">Page Title</label>
                <input type="text" [value]="store.config().texts.title" (input)="updatePageTitle($event)" class="w-full bg-zinc-800 border-none rounded p-1 text-xs text-white">
             </div>
+        </div>
+
+        <!-- Environment Config (UPDATED) -->
+        <div class="p-4 bg-white/5 rounded space-y-4">
+          <h3 class="text-xs uppercase text-zinc-500 font-bold">3D Environment</h3>
+          
+          <div>
+            <label class="text-xs uppercase text-zinc-500 block mb-2 font-bold">Wall Opacity (Mirror)</label>
+            <div class="flex items-center gap-2">
+              <input type="range" min="0" max="1" step="0.05" 
+                     [value]="store.config().wallTint" 
+                     (input)="updateWallTint($event)"
+                     class="w-full accent-white h-1 bg-zinc-700 rounded appearance-none cursor-pointer">
+              <span class="text-[10px] w-6 text-right">{{(store.config().wallTint * 100).toFixed(0)}}%</span>
+            </div>
+          </div>
+          
+          <div>
+             <label class="text-xs uppercase text-zinc-500 block mb-2 font-bold">Active Backgrounds</label>
+             <div class="space-y-2 mb-3">
+                 @for (env of store.config().environments; track env.id) {
+                     <div class="flex items-center justify-between p-2 rounded border"
+                          [class.bg-green-900]="store.activeEnvironment()?.id === env.id"
+                          [class.border-green-500]="store.activeEnvironment()?.id === env.id"
+                          [class.bg-zinc-800]="store.activeEnvironment()?.id !== env.id"
+                          [class.border-transparent]="store.activeEnvironment()?.id !== env.id">
+                         <div class="flex-1 cursor-pointer" (click)="store.setActiveEnvironment(env.id)">
+                             <span class="text-xs font-bold block">{{env.name}}</span>
+                         </div>
+                         <button (click)="removeEnvironment(env.id)" class="text-zinc-500 hover:text-red-500 px-2">×</button>
+                     </div>
+                 }
+                 
+                 @if (store.config().environments.length === 0) {
+                     <div class="text-[10px] text-zinc-500 italic p-2 text-center">No environment models loaded</div>
+                 }
+             </div>
+             
+             <label class="glass-btn w-full text-center block cursor-pointer">
+                 UPLOAD NEW (.GLB)
+                 <input type="file" accept=".glb,.gltf" (change)="onEnvironmentUpload($event)" class="hidden">
+             </label>
+          </div>
+          
+          @if (store.activeEnvironment()) {
+              <div class="border-t border-zinc-700 pt-3">
+                  <h4 class="text-[10px] uppercase text-zinc-400 font-bold mb-2">Transform Active Model</h4>
+                  
+                  <div class="mb-2">
+                      <label class="text-[9px] text-zinc-500 block">Scale</label>
+                      <input type="range" min="1" max="500" step="1" 
+                             [value]="store.activeEnvironment()!.scale"
+                             (input)="updateEnvScale($event)"
+                             class="w-full h-1 bg-zinc-700 rounded appearance-none cursor-pointer">
+                      <div class="text-[9px] text-right">{{store.activeEnvironment()!.scale}}</div>
+                  </div>
+                  
+                  <div class="grid grid-cols-3 gap-2">
+                      <div>
+                          <label class="text-[9px] text-zinc-500 block text-center">Pos X</label>
+                          <input type="number" [value]="store.activeEnvironment()!.position[0]" (input)="updateEnvPos($event, 0)" class="w-full bg-zinc-800 text-[10px] p-1 text-center rounded">
+                      </div>
+                      <div>
+                          <label class="text-[9px] text-zinc-500 block text-center">Pos Y</label>
+                          <input type="number" [value]="store.activeEnvironment()!.position[1]" (input)="updateEnvPos($event, 1)" class="w-full bg-zinc-800 text-[10px] p-1 text-center rounded">
+                      </div>
+                      <div>
+                          <label class="text-[9px] text-zinc-500 block text-center">Pos Z</label>
+                          <input type="number" [value]="store.activeEnvironment()!.position[2]" (input)="updateEnvPos($event, 2)" class="w-full bg-zinc-800 text-[10px] p-1 text-center rounded">
+                      </div>
+                  </div>
+              </div>
+          }
         </div>
 
         <!-- Hotspot Editor (Only in Tech or Interior) -->
@@ -194,16 +269,6 @@
              <input #modelInput type="file" accept=".glb,.gltf" (click)="onFileInputClick($event)" (change)="onFileSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
              <div class="text-[9px] text-zinc-500 mt-1">Parts automatically identified for Tech Mode</div>
            </div>
-
-           <div>
-              <label class="text-[10px] uppercase font-bold text-zinc-400 mb-1 block">Ignition Sound (MP3/WAV)</label>
-              <input #ignInput type="file" accept="audio/*" (click)="onFileInputClick($event)" (change)="onIgnitionSoundSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
-           </div>
-           
-           <div>
-              <label class="text-[10px] uppercase font-bold text-zinc-400 mb-1 block">Drive Loop Sound (MP3/WAV)</label>
-              <input #driveInput type="file" accept="audio/*" (click)="onFileInputClick($event)" (change)="onDriveSoundSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
-           </div>
         </div>
         
         <!-- Character Upload -->
@@ -212,34 +277,7 @@
             <div>
                <label class="text-[10px] uppercase font-bold text-zinc-400 mb-1 block">Upload Avatar (.glb, .fbx)</label>
                <input type="file" accept=".glb,.gltf,.fbx" (click)="onFileInputClick($event)" (change)="onCharacterFileSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
-               <div class="text-[9px] text-zinc-500 mt-1">Supports animated models</div>
             </div>
-        </div>
-
-        <!-- Lighting & Environment -->
-        <div class="p-4 bg-white/5 rounded space-y-4">
-          <h3 class="text-xs uppercase text-zinc-500 font-bold">Environment</h3>
-
-          <div>
-            <label class="text-xs uppercase text-zinc-500 block mb-2 font-bold">Main Intensity</label>
-            <input type="range" min="0" max="3" step="0.1" 
-                  [value]="store.config().lighting.intensity" 
-                  (input)="updateLightIntensity($event)"
-                  class="w-full accent-white h-1 bg-zinc-700 rounded appearance-none cursor-pointer">
-          </div>
-
-          <div>
-            <label class="text-xs uppercase text-zinc-500 block mb-2 font-bold">System Accent</label>
-            <div class="flex gap-2">
-              <input type="color" [value]="store.config().lighting.accentColor" (input)="updateAccentColor($event)" class="bg-transparent border-none h-8 w-8 cursor-pointer">
-              <span class="text-xs font-mono self-center">{{store.config().lighting.accentColor}}</span>
-            </div>
-          </div>
-
-          <div>
-            <label class="text-xs uppercase text-zinc-500 block mb-2 font-bold">Floor Texture</label>
-            <input type="file" accept="image/*" (change)="onFloorTextureSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
-          </div>
         </div>
 
       </div>
@@ -298,7 +336,9 @@
 
   <!-- Build Button -->
   @if (!store.isCustomizing()) {
-    <div class="absolute top-10 left-1/2 -translate-x-1/2 pointer-events-auto">
+    <div class="absolute left-1/2 -translate-x-1/2 pointer-events-auto" 
+         style="top: 120px"
+         [style.transform]="'translateX(-50%) translate(' + store.config().uiOffsets.buildBtn.x + 'px, ' + store.config().uiOffsets.buildBtn.y + 'px)'">
        <button class="glass-btn interactive font-bold text-xs py-3 px-8"
                [style.border-color]="store.config().lighting.accentColor"
                (click)="store.isCustomizing.set(true)">

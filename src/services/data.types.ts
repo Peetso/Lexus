@@ -57,6 +57,15 @@ export interface CarConfig {
   driveSoundAssetId?: string; // Persistent ID
 }
 
+export interface EnvironmentItem {
+  id: string;
+  name: string;
+  url: string;
+  assetId: string;
+  scale: number;
+  position: [number, number, number];
+}
+
 export interface SectionConfig {
   id: string;
   label: string;
@@ -67,9 +76,16 @@ export interface AppConfig {
   logoAssetId?: string; // Persistent ID
 
   pageTitle: string;
+  renderQuality: 'high' | 'low';
   
   floorTextureUrl: string;
   floorTextureAssetId?: string; // Persistent ID
+
+  // Multiple Environments Support
+  environments: EnvironmentItem[];
+  activeEnvironmentId: string | null;
+
+  wallTint: number; // 0.0 (Invisible) to 1.0 (Solid)
 
   lighting: { intensity: number; ambient: number; ledColor: string; accentColor: string };
   headlights: { on: boolean; intensity: number; color: string; };
@@ -87,6 +103,11 @@ export interface AppConfig {
       modelType?: 'glb' | 'fbx' | 'none'; 
   };
   audio: { masterVolume: number; muted: boolean; };
+  
+  uiOffsets: {
+      buildBtn: { x: number, y: number };
+      ignitionBtn: { x: number, y: number };
+  };
 }
 
 export const DEFAULT_PARTS: PartConfig[] = [
@@ -104,7 +125,13 @@ export const DEFAULT_CUSTOMIZATION: CustomCategory[] = [
 export const DEFAULT_CONFIG: AppConfig = {
   logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/d/df/Lexus_logo_and_wordmark.svg',
   pageTitle: 'LEXUS | FUTURE',
+  renderQuality: 'high',
   floorTextureUrl: 'https://images.unsplash.com/photo-1599026408257-2c130327f314?q=80&w=2048&auto=format&fit=crop',
+  
+  environments: [],
+  activeEnvironmentId: null,
+
+  wallTint: 0.95, // Darker default
   lighting: { intensity: 1.2, ambient: 0.2, ledColor: '#ffffff', accentColor: '#FF9900' }, // Orange Accent
   headlights: { on: true, intensity: 80, color: '#FFDDaa' },
   texts: { title: 'EXPERIENCE AMAZING', subtitle: 'FUTURE CONCEPT' },
@@ -122,5 +149,9 @@ export const DEFAULT_CONFIG: AppConfig = {
     { id: 'rz-450', name: 'RZ 450e', year: '2024', type: 'SUV', color: '#d48c55', underglowColor: '#d48c55', roughness: 0.2, metalness: 0.7, parts: DEFAULT_PARTS, interiorPoints: [], techPoints: [], scale: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0], customization: DEFAULT_CUSTOMIZATION }
   ],
   character: { outfitColor: '#333', skinColor: '#aaa', scale: 1, position: [-5, 0, 5], modelType: 'none' },
-  audio: { masterVolume: 0.5, muted: false }
+  audio: { masterVolume: 0.5, muted: false },
+  uiOffsets: {
+      buildBtn: { x: 0, y: 0 },
+      ignitionBtn: { x: 0, y: 0 }
+  }
 };
