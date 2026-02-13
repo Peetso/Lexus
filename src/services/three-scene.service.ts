@@ -1,5 +1,4 @@
 
-
 import { Injectable, effect, inject } from '@angular/core';
 import * as THREE from 'three';
 import { StoreService } from './store.service';
@@ -36,6 +35,7 @@ export class ThreeSceneService {
   private gltfLoader = new GLTFLoader();
   private fbxLoader = new FBXLoader();
   private audioLoader = new THREE.AudioLoader();
+  private textureLoader = new THREE.TextureLoader();
   
   // Scene Groups
   private fleetGroup = new THREE.Group(); 
@@ -286,21 +286,24 @@ export class ThreeSceneService {
       // Load buffers if URLs present
       if (car.driveSoundUrl && this.currentEngineSoundId !== car.id) {
           if (this.engineSound.isPlaying) this.engineSound.stop();
+          this.store.incrementLoading();
           this.audioLoader.load(car.driveSoundUrl, (buffer) => {
               this.currentEngineSoundId = car.id; // Update tracked ID
               this.engineSound.setBuffer(buffer);
               this.engineSound.setLoop(true);
               this.engineSound.setVolume(0.5);
-              // If we were running, restart? No, better wait for ignition.
-          });
+              this.store.decrementLoading();
+          }, undefined, () => this.store.decrementLoading());
       }
       
       if (car.ignitionSoundUrl) {
+          this.store.incrementLoading();
           this.audioLoader.load(car.ignitionSoundUrl, (buffer) => {
               this.ignitionSound.setBuffer(buffer);
               this.ignitionSound.setLoop(false);
               this.ignitionSound.setVolume(1.0);
-          });
+              this.store.decrementLoading();
+          }, undefined, () => this.store.decrementLoading());
       }
   }
 
@@ -406,6 +409,7 @@ export class ThreeSceneService {
       this.envObjectMap.set(env.id, anchor);
       this.wallModelGroup.add(anchor);
 
+      this.store.incrementLoading();
       this.gltfLoader.load(env.url, (gltf) => {
           // Verify anchor still exists (wasn't deleted during load)
           if (this.envObjectMap.has(env.id)) {
@@ -421,6 +425,10 @@ export class ThreeSceneService {
 
               anchor.add(model);
           }
+          this.store.decrementLoading();
+      }, undefined, (err) => {
+          console.error('Failed to load env', err);
+          this.store.decrementLoading();
       });
   }
   
@@ -502,6 +510,7 @@ export class ThreeSceneService {
       this.fleetGroup.add(group);
 
       if (carConfig.modelUrl) {
+          this.store.incrementLoading();
           this.gltfLoader.load(carConfig.modelUrl, (gltf) => {
               const model = gltf.scene;
               const box = new THREE.Box3().setFromObject(model);
@@ -526,6 +535,10 @@ export class ThreeSceneService {
               if (this.store.activeCar().id === carConfig.id) {
                   this.setupActiveCarPhysics(group);
               }
+              this.store.decrementLoading();
+          }, undefined, (err) => {
+             console.error('Car load failed', err);
+             this.store.decrementLoading();
           });
       } else {
           this.buildProceduralCar(group, carConfig);
@@ -710,16 +723,21 @@ export class ThreeSceneService {
               }
           }
           this.charGroup.add(object);
+          this.store.decrementLoading();
       };
+      
+      this.store.incrementLoading();
 
       if (type === 'glb') {
           this.gltfLoader.load(url, (gltf) => {
              // @ts-ignore 
              gltf.scene.animations = gltf.animations; 
              onLoad(gltf.scene);
-          });
+          }, undefined, () => this.store.decrementLoading());
       } else if (type === 'fbx') {
-          this.fbxLoader.load(url, (fbx) => onLoad(fbx));
+          this.fbxLoader.load(url, (fbx) => onLoad(fbx), undefined, () => this.store.decrementLoading());
+      } else {
+          this.store.decrementLoading();
       }
   }
 
@@ -822,6 +840,7 @@ export class ThreeSceneService {
 
   private updateFloorTexture(url: string) {
     if (!this.floorMaterial) return;
+    this.store.incrementLoading();
     new THREE.TextureLoader().load(url, (map) => {
       map.wrapS = THREE.RepeatWrapping;
       map.wrapT = THREE.RepeatWrapping;
@@ -832,7 +851,8 @@ export class ThreeSceneService {
       map.magFilter = THREE.LinearFilter;
       this.floorMaterial.map = map;
       this.floorMaterial.needsUpdate = true;
-    });
+      this.store.decrementLoading();
+    }, undefined, () => this.store.decrementLoading());
   }
   
   private applyWallTint(tint: number) {

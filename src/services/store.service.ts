@@ -2,13 +2,27 @@
 import { Injectable, signal, computed, effect, inject } from '@angular/core';
 import { AppConfig, DEFAULT_CONFIG, CarConfig, Hotspot, EnvironmentItem } from './data.types';
 import { DbService } from './db.service';
+import { ApiService } from './api.service';
 
 @Injectable({ providedIn: 'root' })
 export class StoreService {
   db = inject(DbService);
+  api = inject(ApiService);
 
   // Main State
   config = signal<AppConfig>(DEFAULT_CONFIG);
+  
+  // Loading State
+  private loadingCount = signal(0);
+  isLoading = computed(() => this.loadingCount() > 0);
+
+  incrementLoading() {
+    this.loadingCount.update(c => c + 1);
+  }
+
+  decrementLoading() {
+    this.loadingCount.update(c => Math.max(0, c - 1));
+  }
   
   // Computed Helpers
   activeCarIndex = computed(() => this.config().activeCarIndex);
@@ -34,7 +48,7 @@ export class StoreService {
   constructor() {
       this.initializeData();
 
-      // Auto-save Global Settings
+      // Auto-save Global Settings (Hybrid: LocalStorage + Server)
       effect(() => {
           const current = this.config();
           const globalSettings = {
@@ -51,103 +65,140 @@ export class StoreService {
 
              activeCarIndex: current.activeCarIndex
           };
+          
+          // 1. Local Persistence
           try {
               localStorage.setItem('lexus_global_settings_v4', JSON.stringify(globalSettings));
           } catch (e) {
-              console.warn('Failed to save settings', e);
+              console.warn('Failed to save settings locally', e);
           }
+
+          // 2. Server Persistence (Fire and Forget)
+          this.api.saveSettings(globalSettings);
       });
   }
 
   private async initializeData() {
-      // 1. Load Global Settings
-      let loadedConfig = { ...DEFAULT_CONFIG };
+      this.incrementLoading();
       try {
-          const savedSettings = localStorage.getItem('lexus_global_settings_v4');
-          if (savedSettings) {
-              const parsed = JSON.parse(savedSettings);
-              loadedConfig = { ...loadedConfig, ...parsed };
-              // Ensure default environments array if missing
-              if (!loadedConfig.environments) loadedConfig.environments = [];
-          }
-      } catch (e) { console.warn('Settings load error', e); }
+          let loadedConfig = { ...DEFAULT_CONFIG };
 
-      // 2. Load Cars from DB
-      const dbCars = await this.db.getAllCars();
-      if (dbCars.length > 0) {
-          loadedConfig.fleet = dbCars;
-      } else {
-          for (const car of DEFAULT_CONFIG.fleet) {
-              await this.db.saveCar(car);
+          // 1. Load Global Settings (Try Server -> Fallback LocalStorage)
+          const serverSettings = await this.api.getSettings();
+          if (serverSettings) {
+              loadedConfig = { ...loadedConfig, ...serverSettings };
+          } else {
+              try {
+                  const savedSettings = localStorage.getItem('lexus_global_settings_v4');
+                  if (savedSettings) {
+                      const parsed = JSON.parse(savedSettings);
+                      loadedConfig = { ...loadedConfig, ...parsed };
+                  }
+              } catch (e) { console.warn('Settings load error', e); }
           }
+          
+          // Ensure environments array
+          if (!loadedConfig.environments) loadedConfig.environments = [];
+
+          // 2. Load Cars (Try Server -> Fallback DB -> Fallback Defaults)
+          const serverCars = await this.api.getCars();
+          if (serverCars && serverCars.length > 0) {
+              loadedConfig.fleet = serverCars;
+          } else {
+              const dbCars = await this.db.getAllCars();
+              if (dbCars.length > 0) {
+                  loadedConfig.fleet = dbCars;
+              } else {
+                  // Initialize DB with Defaults
+                  for (const car of DEFAULT_CONFIG.fleet) {
+                      await this.db.saveCar(car);
+                  }
+              }
+          }
+
+          // 3. Hydrate Blobs (For items that might be in IndexedDB)
+          // If server provided URLs, hydration checks will simply skip if assetId is missing or if URL works.
+          await this.hydrateGlobalAssets(loadedConfig);
+          await this.hydrateFleetAssets(loadedConfig.fleet);
+
+          // 4. Set State
+          this.config.set(loadedConfig);
+      } finally {
+          this.decrementLoading();
       }
-
-      // 3. Hydrate Blobs
-      await this.hydrateGlobalAssets(loadedConfig);
-      await this.hydrateFleetAssets(loadedConfig.fleet);
-
-      // 4. Set State
-      this.config.set(loadedConfig);
   }
 
   // --- Hydration Helpers ---
 
   private async hydrateGlobalAssets(conf: AppConfig) {
-      if (conf.logoAssetId) {
-          const blob = await this.db.getAsset(conf.logoAssetId);
-          if (blob) conf.logoUrl = URL.createObjectURL(blob);
-      }
-      if (conf.floorTextureAssetId) {
-          const blob = await this.db.getAsset(conf.floorTextureAssetId);
-          if (blob) conf.floorTextureUrl = URL.createObjectURL(blob);
-      }
-      if (conf.character.modelAssetId) {
-          const blob = await this.db.getAsset(conf.character.modelAssetId);
-          if (blob) conf.character.modelUrl = URL.createObjectURL(blob);
-      }
+      // If we have an ID but no URL (or if we prefer checking local DB for offline support)
+      // We check DB. If DB has it, we use Blob URL. If not, we keep existing URL (which might be server URL).
       
-      // Hydrate Environments
+      const hydrate = async (assetId?: string, currentUrl?: string): Promise<string | undefined> => {
+          if (!assetId) return currentUrl;
+          const blob = await this.db.getAsset(assetId);
+          return blob ? URL.createObjectURL(blob) : currentUrl;
+      };
+
+      conf.logoUrl = (await hydrate(conf.logoAssetId, conf.logoUrl)) || conf.logoUrl;
+      conf.floorTextureUrl = (await hydrate(conf.floorTextureAssetId, conf.floorTextureUrl)) || conf.floorTextureUrl;
+      conf.character.modelUrl = (await hydrate(conf.character.modelAssetId, conf.character.modelUrl)) || conf.character.modelUrl;
+      
       if (conf.environments) {
           for (const env of conf.environments) {
-              if (env.assetId) {
-                  const blob = await this.db.getAsset(env.assetId);
-                  if (blob) env.url = URL.createObjectURL(blob);
-              }
+              env.url = (await hydrate(env.assetId, env.url)) || env.url;
           }
       }
   }
 
   private async hydrateFleetAssets(fleet: CarConfig[]) {
+      const hydrate = async (assetId?: string, currentUrl?: string): Promise<string | undefined> => {
+          if (!assetId) return currentUrl;
+          const blob = await this.db.getAsset(assetId);
+          return blob ? URL.createObjectURL(blob) : currentUrl;
+      };
+
       for (const car of fleet) {
-          if (car.modelAssetId) {
-              const b = await this.db.getAsset(car.modelAssetId);
-              if (b) car.modelUrl = URL.createObjectURL(b);
-          }
-          if (car.ignitionSoundAssetId) {
-              const b = await this.db.getAsset(car.ignitionSoundAssetId);
-              if (b) car.ignitionSoundUrl = URL.createObjectURL(b);
-          }
-          if (car.driveSoundAssetId) {
-              const b = await this.db.getAsset(car.driveSoundAssetId);
-              if (b) car.driveSoundUrl = URL.createObjectURL(b);
-          }
+          car.modelUrl = (await hydrate(car.modelAssetId, car.modelUrl));
+          car.ignitionSoundUrl = (await hydrate(car.ignitionSoundAssetId, car.ignitionSoundUrl));
+          car.driveSoundUrl = (await hydrate(car.driveSoundAssetId, car.driveSoundUrl));
       }
   }
 
   // --- Actions ---
 
   async uploadFile(file: File): Promise<{ id: string, url: string }> {
-      const id = crypto.randomUUID();
-      await this.db.saveAsset(id, file);
-      const url = URL.createObjectURL(file);
-      return { id, url };
+      this.incrementLoading();
+      try {
+          // 1. Try Server Upload
+          const serverResult = await this.api.uploadAsset(file);
+          if (serverResult) {
+              return serverResult;
+          }
+
+          // 2. Fallback to Local IndexedDB
+          const id = crypto.randomUUID();
+          await this.db.saveAsset(id, file);
+          const url = URL.createObjectURL(file);
+          return { id, url };
+      } finally {
+          this.decrementLoading();
+      }
   }
 
   // Manual Save for Car
   async saveCurrentCar() {
-      const car = this.activeCar();
-      await this.db.saveCar(car);
-      console.log('Car Saved to DB:', car.name);
+      this.incrementLoading();
+      try {
+          const car = this.activeCar();
+          // Save Local
+          await this.db.saveCar(car);
+          // Save Server
+          await this.api.saveCar(car);
+          console.log('Car Saved (Hybrid)', car.name);
+      } finally {
+          this.decrementLoading();
+      }
   }
 
   updateConfig(newConfig: Partial<AppConfig>) {

@@ -19,6 +19,14 @@
   </div>
 }
 
+<!-- Loading Overlay -->
+@if (store.isLoading()) {
+  <div class="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center transition-all duration-300">
+    <div class="w-12 h-12 border-4 border-zinc-800 border-t-white rounded-full animate-spin mb-4"></div>
+    <div class="text-xs tracking-[0.3em] font-bold text-white animate-pulse">LOADING ASSETS...</div>
+  </div>
+}
+
 <!-- UI Layer -->
 <div class="ui-layer flex flex-col justify-between h-full pointer-events-none">
   
