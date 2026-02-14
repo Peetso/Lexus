@@ -155,8 +155,7 @@ export class ThreeSceneService {
         if (section.id === 'showroom') {
             this.resetCameraToShowroom();
             this.charGroup.visible = false;
-            // Stop engine in showroom
-            this.stopEngine();
+            // Removed stopEngine() to allow persistence
         } 
         else if (section.id === 'cockpit') {
             this.moveToInterior();
@@ -285,6 +284,9 @@ export class ThreeSceneService {
 
       // Load buffers if URLs present
       if (car.driveSoundUrl && this.currentEngineSoundId !== car.id) {
+          // Keep track if engine was running before switching
+          const wasRunning = this.isEngineRunning;
+
           if (this.engineSound.isPlaying) this.engineSound.stop();
           this.store.incrementLoading();
           this.audioLoader.load(car.driveSoundUrl, (buffer) => {
@@ -292,8 +294,19 @@ export class ThreeSceneService {
               this.engineSound.setBuffer(buffer);
               this.engineSound.setLoop(true);
               this.engineSound.setVolume(0.5);
+              
+              // Resume automatically if it was running
+              if (wasRunning && !this.engineSound.isPlaying) {
+                  this.engineSound.play();
+              }
+              
               this.store.decrementLoading();
           }, undefined, () => this.store.decrementLoading());
+      } else if (car.driveSoundUrl && this.currentEngineSoundId === car.id) {
+          // Re-affirm state if same car
+          if (this.isEngineRunning && !this.engineSound.isPlaying && this.engineSound.buffer) {
+               this.engineSound.play();
+          }
       }
       
       if (car.ignitionSoundUrl) {
@@ -322,20 +335,20 @@ export class ThreeSceneService {
   private startEngine() {
       if (this.isEngineRunning) return;
       
+      this.isEngineRunning = true;
+
       if (this.ignitionSound.buffer) {
           if (this.ignitionSound.isPlaying) this.ignitionSound.stop();
           this.ignitionSound.play();
           
           this.ignitionSound.onEnded = () => {
-             if (this.engineSound.buffer && !this.engineSound.isPlaying) {
+             if (this.engineSound.buffer && !this.engineSound.isPlaying && this.isEngineRunning) {
                  this.engineSound.play();
              }
           };
       } else if (this.engineSound.buffer) {
           this.engineSound.play();
       }
-      
-      this.isEngineRunning = true;
   }
 
   public stopEngine() {
@@ -366,6 +379,18 @@ export class ThreeSceneService {
           this.renderer.setPixelRatio(1.0); 
           this.renderer.shadowMap.enabled = false;
       }
+      
+      // Force material update for shadow reconfiguration
+      this.scene.traverse((obj) => {
+          if ((obj as THREE.Mesh).isMesh) {
+              const mesh = obj as THREE.Mesh;
+              if (Array.isArray(mesh.material)) {
+                  mesh.material.forEach(m => m.needsUpdate = true);
+              } else if (mesh.material) {
+                  (mesh.material as THREE.Material).needsUpdate = true;
+              }
+          }
+      });
   }
 
   // --- Environment Logic ---
@@ -672,13 +697,21 @@ export class ThreeSceneService {
       this.charGroup.visible = true;
       const charConfig = this.store.config().character;
       this.charGroup.position.set(charConfig.position[0], charConfig.position[1], charConfig.position[2]);
-      if (this.camera && this.controls) {
-          const offset = new THREE.Vector3(0, 3, 4);
-          this.camera.position.copy(this.charGroup.position).add(offset);
-          this.controls.target.copy(this.charGroup.position);
-          this.controls.maxDistance = 10;
-          this.controls.minDistance = 2;
-          this.controls.enablePan = true; 
+      
+      if (this.controls) {
+          this.controls.enabled = false; // Disable OrbitControls for Chase Cam
+      }
+
+      if (this.camera) {
+          // Snap camera behind character immediately to avoid jump
+          const idealOffset = new THREE.Vector3(0, 2.5, -4);
+          idealOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.charRotation);
+          this.camera.position.copy(this.charGroup.position).add(idealOffset);
+          
+          const lookAtPos = new THREE.Vector3(0, 1.5, 5);
+          lookAtPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.charRotation);
+          lookAtPos.add(this.charGroup.position);
+          this.camera.lookAt(lookAtPos);
       }
   }
   
@@ -1172,11 +1205,21 @@ export class ThreeSceneService {
         
         this.animateCharacter(delta, actualSpeed);
         
-        if (this.controls) {
-            const targetVec = this.charGroup.position.clone().add(new THREE.Vector3(0, 1.2, 0));
-            this.controls.target.lerp(targetVec, delta * 10);
-            this.controls.update();
-        }
+        // --- CHASE CAMERA LOGIC (Same as Car) ---
+        // Offset: Behind and slightly above character
+        const idealOffset = new THREE.Vector3(0, 2.5, -4); 
+        idealOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.charRotation);
+        idealOffset.add(this.charGroup.position);
+        
+        // Smooth follow
+        this.camera.position.lerp(idealOffset, delta * 3.0);
+        
+        // Look ahead of character
+        const lookAtPos = new THREE.Vector3(0, 1.4, 5); 
+        lookAtPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.charRotation);
+        lookAtPos.add(this.charGroup.position);
+        
+        this.camera.lookAt(lookAtPos);
     }
 
     this.renderer.render(this.scene, this.camera);

@@ -48,7 +48,7 @@ export class StoreService {
   constructor() {
       this.initializeData();
 
-      // Auto-save Global Settings (Hybrid: LocalStorage + Server)
+      // Auto-save Global Settings
       effect(() => {
           const current = this.config();
           const globalSettings = {
@@ -57,24 +57,26 @@ export class StoreService {
              texts: current.texts,
              character: current.character, 
              logoAssetId: current.logoAssetId,
+             logoUrl: current.logoUrl, // Save URL for server
              floorTextureAssetId: current.floorTextureAssetId,
+             floorTextureUrl: current.floorTextureUrl, // Save URL for server
              
              // Environment settings
-             environments: current.environments.map(e => ({...e, url: undefined})), // Don't save blob URLs to localstorage
+             environments: current.environments,
              activeEnvironmentId: current.activeEnvironmentId,
 
              activeCarIndex: current.activeCarIndex
           };
           
-          // 1. Local Persistence
+          // 1. Server Persistence (Primary)
+          this.api.saveSettings(globalSettings);
+
+          // 2. Local Persistence (Backup)
           try {
               localStorage.setItem('lexus_global_settings_v4', JSON.stringify(globalSettings));
           } catch (e) {
               console.warn('Failed to save settings locally', e);
           }
-
-          // 2. Server Persistence (Fire and Forget)
-          this.api.saveSettings(globalSettings);
       });
   }
 
@@ -82,12 +84,15 @@ export class StoreService {
       this.incrementLoading();
       try {
           let loadedConfig = { ...DEFAULT_CONFIG };
+          let usedServerConfig = false;
 
-          // 1. Load Global Settings (Try Server -> Fallback LocalStorage)
+          // 1. Load Global Settings (Server Priority)
           const serverSettings = await this.api.getSettings();
-          if (serverSettings) {
+          if (serverSettings && Object.keys(serverSettings).length > 0) {
               loadedConfig = { ...loadedConfig, ...serverSettings };
+              usedServerConfig = true;
           } else {
+              // Fallback to local if server is down
               try {
                   const savedSettings = localStorage.getItem('lexus_global_settings_v4');
                   if (savedSettings) {
@@ -97,14 +102,14 @@ export class StoreService {
               } catch (e) { console.warn('Settings load error', e); }
           }
           
-          // Ensure environments array
           if (!loadedConfig.environments) loadedConfig.environments = [];
 
-          // 2. Load Cars (Try Server -> Fallback DB -> Fallback Defaults)
+          // 2. Load Cars (Server Priority)
           const serverCars = await this.api.getCars();
           if (serverCars && serverCars.length > 0) {
               loadedConfig.fleet = serverCars;
           } else {
+              // Fallback DB
               const dbCars = await this.db.getAllCars();
               if (dbCars.length > 0) {
                   loadedConfig.fleet = dbCars;
@@ -116,10 +121,13 @@ export class StoreService {
               }
           }
 
-          // 3. Hydrate Blobs (For items that might be in IndexedDB)
-          // If server provided URLs, hydration checks will simply skip if assetId is missing or if URL works.
-          await this.hydrateGlobalAssets(loadedConfig);
-          await this.hydrateFleetAssets(loadedConfig.fleet);
+          // 3. Hydrate Assets
+          
+          if (!usedServerConfig) {
+             // Only attempt blob hydration if we are relying on local data
+             await this.hydrateGlobalAssets(loadedConfig);
+             await this.hydrateFleetAssets(loadedConfig.fleet);
+          }
 
           // 4. Set State
           this.config.set(loadedConfig);
@@ -131,10 +139,9 @@ export class StoreService {
   // --- Hydration Helpers ---
 
   private async hydrateGlobalAssets(conf: AppConfig) {
-      // If we have an ID but no URL (or if we prefer checking local DB for offline support)
-      // We check DB. If DB has it, we use Blob URL. If not, we keep existing URL (which might be server URL).
-      
       const hydrate = async (assetId?: string, currentUrl?: string): Promise<string | undefined> => {
+          // Allow absolute HTTP URLs OR relative paths (e.g. /uploads/...)
+          if (currentUrl && (currentUrl.startsWith('http') || currentUrl.startsWith('/'))) return currentUrl; 
           if (!assetId) return currentUrl;
           const blob = await this.db.getAsset(assetId);
           return blob ? URL.createObjectURL(blob) : currentUrl;
@@ -153,6 +160,7 @@ export class StoreService {
 
   private async hydrateFleetAssets(fleet: CarConfig[]) {
       const hydrate = async (assetId?: string, currentUrl?: string): Promise<string | undefined> => {
+          if (currentUrl && (currentUrl.startsWith('http') || currentUrl.startsWith('/'))) return currentUrl;
           if (!assetId) return currentUrl;
           const blob = await this.db.getAsset(assetId);
           return blob ? URL.createObjectURL(blob) : currentUrl;
@@ -176,7 +184,7 @@ export class StoreService {
               return serverResult;
           }
 
-          // 2. Fallback to Local IndexedDB
+          // 2. Fallback to Local IndexedDB (Offline mode)
           const id = crypto.randomUUID();
           await this.db.saveAsset(id, file);
           const url = URL.createObjectURL(file);
@@ -191,11 +199,11 @@ export class StoreService {
       this.incrementLoading();
       try {
           const car = this.activeCar();
-          // Save Local
-          await this.db.saveCar(car);
           // Save Server
           await this.api.saveCar(car);
-          console.log('Car Saved (Hybrid)', car.name);
+          // Save Local Backup
+          await this.db.saveCar(car);
+          console.log('Car Saved', car.name);
       } finally {
           this.decrementLoading();
       }

@@ -140,6 +140,19 @@
             </div>
         </div>
 
+        <!-- Graphics Config -->
+        <div class="p-4 bg-white/5 rounded space-y-3">
+            <h3 class="text-xs uppercase text-zinc-500 font-bold">Graphics</h3>
+            <div>
+               <label class="text-[10px] text-zinc-400 mb-1 block">Render Quality</label>
+               <select (change)="updateQuality($event)" class="w-full bg-zinc-800 border-none rounded p-1 text-xs text-white cursor-pointer focus:outline-none focus:ring-1 focus:ring-white/50">
+                 <option value="high" [selected]="store.config().renderQuality === 'high'">High (Shadows, 2x Res)</option>
+                 <option value="low" [selected]="store.config().renderQuality === 'low'">Low (Performance, 1x Res)</option>
+               </select>
+               <p class="text-[9px] text-zinc-500 mt-1">Low mode disables shadows and reduces resolution for better performance on mobile.</p>
+            </div>
+        </div>
+
         <!-- Environment Config (UPDATED) -->
         <div class="p-4 bg-white/5 rounded space-y-4">
           <h3 class="text-xs uppercase text-zinc-500 font-bold">3D Environment</h3>
