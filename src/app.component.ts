@@ -5,7 +5,7 @@ import { CanvasViewerComponent } from './components/canvas-viewer.component';
 import { JoystickComponent } from './components/joystick.component';
 import { StoreService } from './services/store.service';
 import { ThreeSceneService } from './services/three-scene.service'; // Added explicit import
-import { Hotspot, EnvironmentItem } from './services/data.types';
+import { Hotspot, EnvironmentItem, SceneObject } from './services/data.types';
 
 @Component({
   selector: 'app-root',
@@ -97,9 +97,19 @@ export class AppComponent implements OnInit {
       }
   }
 
+  // Explicit Save
+  async saveAllSettings() {
+      await this.store.saveGlobalConfig(undefined, true);
+      alert('System Settings Saved Successfully!');
+  }
+
   playIgnition() {
     // Delegate to ThreeSceneService for 3D Audio
     this.threeService.toggleIgnition();
+  }
+  
+  toggleMenu() {
+      this.store.isMenuOpen.update(v => !v);
   }
 
   selectOption(catId: string, optId: string) {
@@ -134,6 +144,18 @@ export class AppComponent implements OnInit {
     const texts = { ...this.store.config().texts, title: val };
     this.store.updateConfig({ texts });
   }
+  
+  updateFont(e: Event) {
+      const val = (e.target as HTMLSelectElement).value;
+      const styling = { ...this.store.config().styling, fontFamily: val };
+      this.store.updateConfig({ styling });
+  }
+  
+  updateTextColor(e: Event) {
+      const val = (e.target as HTMLInputElement).value;
+      const styling = { ...this.store.config().styling, textColor: val };
+      this.store.updateConfig({ styling });
+  }
 
   updateCarName(e: Event) {
     const name = (e.target as HTMLInputElement).value;
@@ -156,7 +178,7 @@ export class AppComponent implements OnInit {
   }
   
   updateQuality(e: Event) {
-      const val = (e.target as HTMLSelectElement).value as 'high' | 'low';
+      const val = (e.target as HTMLSelectElement).value as 'ultra' | 'high' | 'low';
       this.store.updateConfig({ renderQuality: val });
   }
 
@@ -211,6 +233,68 @@ export class AppComponent implements OnInit {
           this.store.removeEnvironment(id);
       }
   }
+  
+  // Scene Object Controls
+  async onUploadSceneObject(event: any) {
+      const file = event.target.files[0];
+      if (file) {
+          const { id, url } = await this.store.uploadFile(file);
+          const newObj: SceneObject = {
+              id: crypto.randomUUID(),
+              name: file.name,
+              url,
+              assetId: id,
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1]
+          };
+          this.store.addSceneObject(newObj);
+      }
+  }
+
+  async onReplaceObjectFile(event: any, objId: string) {
+      const file = event.target.files[0];
+      if (file) {
+          const { id, url } = await this.store.uploadFile(file);
+          this.store.updateSceneObject(objId, {
+              url,
+              assetId: id,
+              name: file.name // Update name too? Maybe
+          });
+      }
+  }
+
+  updateObjPos(e: Event, id: string, idx: number) {
+      const val = parseFloat((e.target as HTMLInputElement).value);
+      const obj = this.store.config().sceneObjects.find(o => o.id === id);
+      if (obj) {
+          const newPos = [...obj.position] as [number, number, number];
+          newPos[idx] = val;
+          this.store.updateSceneObject(id, { position: newPos });
+      }
+  }
+
+  updateObjScale(e: Event, id: string) {
+      const val = parseFloat((e.target as HTMLInputElement).value);
+      this.store.updateSceneObject(id, { scale: [val, val, val] });
+  }
+
+  updateObjRot(e: Event, id: string, axis: number) {
+      const val = parseFloat((e.target as HTMLInputElement).value);
+      const obj = this.store.config().sceneObjects.find(o => o.id === id);
+      if (obj) {
+          const newRot = [...obj.rotation] as [number, number, number];
+          newRot[axis] = val; 
+          this.store.updateSceneObject(id, { rotation: newRot });
+      }
+  }
+
+  removeSceneObject(id: string) {
+      if (this.confirmAction('Remove this object from the scene?')) {
+          this.store.removeSceneObject(id);
+      }
+  }
+
 
   // File Handlers
   async onLogoSelected(event: any) {
@@ -272,6 +356,28 @@ export class AppComponent implements OnInit {
       this.store.updateConfig({ 
         floorTextureUrl: url,
         floorTextureAssetId: id
+      });
+    }
+  }
+
+  async onStandTextureSelected(event: any) {
+    const file = event.target.files[0];
+    if (file) {
+      const { id, url } = await this.store.uploadFile(file);
+      this.store.updateConfig({ 
+        standTextureUrl: url,
+        standTextureAssetId: id
+      });
+    }
+  }
+  
+  async onGateTextureSelected(event: any) {
+    const file = event.target.files[0];
+    if (file) {
+      const { id, url } = await this.store.uploadFile(file);
+      this.store.updateConfig({ 
+        gateTextureUrl: url,
+        gateTextureAssetId: id
       });
     }
   }

@@ -28,6 +28,16 @@ export interface CustomCategory {
   options: CustomOption[];
 }
 
+export interface SceneObject {
+  id: string;
+  name: string;
+  url: string;
+  assetId?: string; // Persistent ID
+  position: [number, number, number];
+  rotation: [number, number, number];
+  scale: [number, number, number];
+}
+
 export interface CarConfig {
   id: string;
   name: string;
@@ -76,14 +86,29 @@ export interface AppConfig {
   logoAssetId?: string; // Persistent ID
 
   pageTitle: string;
-  renderQuality: 'high' | 'low';
+  renderQuality: 'ultra' | 'high' | 'low';
   
   floorTextureUrl: string;
   floorTextureAssetId?: string; // Persistent ID
 
+  standTextureUrl: string;
+  standTextureAssetId?: string; // Persistent ID
+  
+  gateTextureUrl: string; // New: For 3D Menu
+  gateTextureAssetId?: string; 
+  
+  // Custom Styling
+  styling: {
+      fontFamily: string;
+      textColor: string;
+  };
+
   // Multiple Environments Support
   environments: EnvironmentItem[];
   activeEnvironmentId: string | null;
+  
+  // Custom Scene Objects
+  sceneObjects: SceneObject[];
 
   wallTint: number; // 0.0 (Invisible) to 1.0 (Solid)
 
@@ -126,10 +151,20 @@ export const DEFAULT_CONFIG: AppConfig = {
   logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/d/df/Lexus_logo_and_wordmark.svg',
   pageTitle: 'LEXUS | FUTURE',
   renderQuality: 'high',
-  floorTextureUrl: 'https://images.unsplash.com/photo-1599026408257-2c130327f314?q=80&w=2048&auto=format&fit=crop',
+  // Replaced broken Unsplash links with reliable placeholders
+  floorTextureUrl: 'https://images.unsplash.com/photo-1620641788427-b9a44e6952d3?q=80&w=2000&auto=format&fit=crop',
+  standTextureUrl: '', 
+  gateTextureUrl: 'https://images.unsplash.com/photo-1550684848-fac1c5b4e853?q=80&w=2000&auto=format&fit=crop', 
   
+  styling: {
+      fontFamily: "'Space Grotesk', sans-serif",
+      textColor: '#ffffff'
+  },
+
   environments: [],
   activeEnvironmentId: null,
+  
+  sceneObjects: [],
 
   wallTint: 0.95, // Darker default
   lighting: { intensity: 1.2, ambient: 0.2, ledColor: '#ffffff', accentColor: '#FF9900' }, // Orange Accent

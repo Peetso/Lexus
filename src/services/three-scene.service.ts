@@ -6,7 +6,9 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
-import { EnvironmentItem, CarConfig } from './data.types';
+import { EnvironmentItem, CarConfig, SceneObject } from './data.types';
+import { FontLoader } from 'three/examples/jsm/loaders/FontLoader.js';
+import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js';
 
 interface CarMaterials {
   paint: THREE.MeshPhysicalMaterial;
@@ -23,6 +25,7 @@ export class ThreeSceneService {
   private camera!: THREE.PerspectiveCamera;
   private renderer!: THREE.WebGLRenderer;
   private controls!: OrbitControls;
+  private pmremGenerator!: THREE.PMREMGenerator; // High Fidelity Env Map Generator
   
   // Audio
   private audioListener!: THREE.AudioListener;
@@ -36,35 +39,48 @@ export class ThreeSceneService {
   private fbxLoader = new FBXLoader();
   private audioLoader = new THREE.AudioLoader();
   private textureLoader = new THREE.TextureLoader();
+  private fontLoader = new FontLoader();
   
   // Scene Groups
   private fleetGroup = new THREE.Group(); 
   private showroomGroup = new THREE.Group(); 
   private wallModelGroup = new THREE.Group(); 
   private wallMesh!: THREE.Mesh; 
+  private standMesh!: THREE.Mesh; 
+  
+  // 3D Menu Group
+  private menuGroup = new THREE.Group();
+  private menuGates: THREE.Mesh[] = [];
+  
+  // Scene Objects Group
+  private sceneObjectsGroup = new THREE.Group();
+  private sceneObjectMap = new Map<string, THREE.Object3D>();
 
   private lightsGroup = new THREE.Group();
+  private dirLight!: THREE.DirectionalLight; 
+
   private hotspotGroup = new THREE.Group();
   private charGroup = new THREE.Group(); 
   
   private clock = new THREE.Clock();
   
-  // Initialization Flag
   private isInitialized = false;
 
-  // Environment State
   private envObjectMap = new Map<string, THREE.Object3D>();
-
-  // Fleet Management
   private carMap = new Map<string, THREE.Group>(); 
   private materialsMap = new Map<string, CarMaterials>();
 
   private currentCarParams = {
       wheels: [] as THREE.Object3D[],
-      originalPositions: new Map<THREE.Object3D, THREE.Vector3>()
+      bodyParts: [] as THREE.Object3D[],
+      hoodParts: [] as THREE.Object3D[],
+      chassisParts: [] as THREE.Object3D[],
+      originalPositions: new Map<THREE.Object3D, THREE.Vector3>(),
+      originalRotations: new Map<THREE.Object3D, THREE.Euler>()
   };
 
   private floorMaterial!: THREE.MeshBasicMaterial;
+  private gateMaterial!: THREE.ShaderMaterial; 
 
   private underglowLight = new THREE.PointLight(0xffffff, 50, 10);
 
@@ -79,21 +95,46 @@ export class ThreeSceneService {
   private charActions: { [key: string]: THREE.AnimationAction } = {};
   private charMeshes: { [key: string]: THREE.Object3D } = {}; 
   
+  // --- High Fidelity Materials ---
   private basePaint = new THREE.MeshPhysicalMaterial({ 
-    color: 0xffffff, metalness: 0.6, roughness: 0.1, clearcoat: 1.0, clearcoatRoughness: 0.05
+    color: 0xffffff, 
+    metalness: 0.7, 
+    roughness: 0.2, 
+    clearcoat: 1.0, 
+    clearcoatRoughness: 0.03,
+    envMapIntensity: 1.5 // Enhanced reflections
   });
+  
   private baseGlass = new THREE.MeshPhysicalMaterial({
-    color: 0x000000, metalness: 0.9, roughness: 0.0, transmission: 0.1, transparent: true, opacity: 0.8
+    color: 0x111111, 
+    metalness: 0.9, 
+    roughness: 0.0, 
+    transmission: 0.2, 
+    transparent: true, 
+    opacity: 0.7,
+    envMapIntensity: 2.0
   });
+  
   private baseRubber = new THREE.MeshStandardMaterial({ 
-      color: 0x111111, roughness: 0.9, metalness: 0.1 
+      color: 0x050505, 
+      roughness: 0.9, 
+      metalness: 0.1,
+      envMapIntensity: 0.5
   });
+  
   private baseChrome = new THREE.MeshStandardMaterial({ 
-      color: 0xffffff, metalness: 0.95, roughness: 0.05 
+      color: 0xffffff, 
+      metalness: 1.0, 
+      roughness: 0.0,
+      envMapIntensity: 3.0 // Mirror chrome
   });
 
   private animationId: number = 0;
   private explodeFactor = 0;
+  
+  // Raycaster
+  private raycaster = new THREE.Raycaster();
+  private mouse = new THREE.Vector2();
 
   constructor() {
     effect(() => {
@@ -111,13 +152,30 @@ export class ThreeSceneService {
        if (this.isInitialized) this.updateFloorTexture(url);
     });
     
-    // Watch Environments & Tint
+    effect(() => {
+       const url = this.store.config().standTextureUrl;
+       if (this.isInitialized) this.updateStandTexture(url);
+    });
+    
+    // Gate Texture Update
+    effect(() => {
+        const url = this.store.config().gateTextureUrl;
+        if (this.isInitialized) this.updateGateTexture(url);
+    });
+    
     effect(() => {
         const envs = this.store.config().environments;
         const tint = this.store.config().wallTint;
         if (this.isInitialized) {
             this.syncEnvironments(envs);
             this.applyWallTint(tint);
+        }
+    });
+
+    effect(() => {
+        const objs = this.store.config().sceneObjects;
+        if (this.isInitialized) {
+            this.syncSceneObjects(objs);
         }
     });
 
@@ -140,41 +198,49 @@ export class ThreeSceneService {
         }
     });
 
+    // Main View Effect
     effect(() => {
         const section = this.store.activeSection();
+        const isMenuOpen = this.store.isMenuOpen();
+        
         if (!this.isInitialized) return;
         
-        if (this.controls) {
-            this.controls.enabled = true;
-            this.controls.maxPolarAngle = Math.PI / 2 - 0.02; 
-            this.controls.minDistance = 1;
-            this.controls.maxDistance = 25;
-            this.controls.enablePan = false;
-        }
+        if (isMenuOpen) {
+            this.enterMenuMode();
+        } else {
+            this.exitMenuMode();
+            // Handle regular section logic
+            if (this.controls) {
+                this.controls.enabled = true;
+                this.controls.maxPolarAngle = Math.PI / 2 - 0.02; 
+                this.controls.minDistance = 1;
+                this.controls.maxDistance = 25;
+                this.controls.enablePan = false;
+            }
 
-        if (section.id === 'showroom') {
-            this.resetCameraToShowroom();
-            this.charGroup.visible = false;
-            // Removed stopEngine() to allow persistence
-        } 
-        else if (section.id === 'cockpit') {
-            this.moveToInterior();
-            this.charGroup.visible = false;
+            if (section.id === 'showroom') {
+                this.resetCameraToShowroom();
+                this.charGroup.visible = false;
+            } 
+            else if (section.id === 'cockpit') {
+                this.moveToInterior();
+                this.charGroup.visible = false;
+            }
+            else if (section.id === 'engineering') {
+                if (this.controls) this.controls.minDistance = 2; 
+                this.charGroup.visible = false;
+            }
+            else if (section.id === 'walk') {
+                this.enterWalkMode();
+            }
+            else if (section.id === 'drive') {
+                this.charGroup.visible = false;
+                this.speed = 0;
+                this.steering = 0;
+                this.carAngle = 0;
+            }
+            this.renderHotspots();
         }
-        else if (section.id === 'engineering') {
-            if (this.controls) this.controls.minDistance = 2; 
-            this.charGroup.visible = false;
-        }
-        else if (section.id === 'walk') {
-            this.enterWalkMode();
-        }
-        else if (section.id === 'drive') {
-            this.charGroup.visible = false;
-            this.speed = 0;
-            this.steering = 0;
-            this.carAngle = 0;
-        }
-        this.renderHotspots();
     });
     
     // Watch Active Car for Audio Updates
@@ -199,12 +265,42 @@ export class ThreeSceneService {
   init(canvas: HTMLCanvasElement) {
     this.scene = new THREE.Scene();
     
+    // High Fidelity Renderer Setup
+    this.renderer = new THREE.WebGLRenderer({ 
+        canvas, 
+        antialias: true, 
+        alpha: false,
+        powerPreference: 'high-performance',
+        stencil: false
+    });
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Softer, realistic shadows
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.0;
+    
+    // PMREM Generator for realistic reflections
+    this.pmremGenerator = new THREE.PMREMGenerator(this.renderer);
+    this.pmremGenerator.compileEquirectangularShader();
+
+    // Environment Texture
+    // Use a high-quality night/studio environment if available, or this placeholder
+    // Ideally, this should be an HDR file loaded via RGBELoader for true HDR lighting.
+    // Since we are restricted to standard loaders here, we use a high-res JPG and PMREM it.
     const textureLoader = new THREE.TextureLoader();
-    const cityTexture = textureLoader.load('https://picsum.photos/seed/cyberpunk/3000/1500'); 
-    cityTexture.mapping = THREE.EquirectangularReflectionMapping;
-    this.scene.background = cityTexture;
-    this.scene.environment = cityTexture;
-    this.scene.backgroundBlurriness = 0.2; 
+    textureLoader.load('https://images.unsplash.com/photo-1493246507139-91e8fad9978e?q=80&w=2940&auto=format&fit=crop', (texture) => {
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        
+        // Generate high-quality radiance map
+        const envMap = this.pmremGenerator.fromEquirectangular(texture).texture;
+        
+        this.scene.background = texture;
+        this.scene.environment = envMap; // Apply to all standard materials automatically
+        this.scene.backgroundBlurriness = 0.3; 
+        
+        texture.dispose();
+    });
 
     this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
     this.camera.position.set(6, 2, 7); 
@@ -212,14 +308,6 @@ export class ThreeSceneService {
     // Audio Listener
     this.audioListener = new THREE.AudioListener();
     this.camera.add(this.audioListener);
-
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
@@ -230,7 +318,14 @@ export class ThreeSceneService {
     this.controls.target.set(0, 0.5, 0);
 
     this.buildFuturisticShowroom();
+    this.buildMenuWorld(); 
+
     this.scene.add(this.showroomGroup);
+    this.scene.add(this.menuGroup); 
+    this.menuGroup.visible = false;
+    
+    this.showroomGroup.add(this.sceneObjectsGroup);
+
     this.scene.add(this.lightsGroup);
     this.scene.add(this.fleetGroup);
 
@@ -240,18 +335,22 @@ export class ThreeSceneService {
     this.scene.add(this.charGroup);
     this.charGroup.visible = false; 
 
-    // Initialize state from config immediately to catch up
     this.isInitialized = true;
     
     const config = this.store.config();
     this.updateLights(config);
     this.syncFleet(config.fleet);
     
-    // Initial Environment Load
     this.syncEnvironments(config.environments);
+    this.syncSceneObjects(config.sceneObjects); 
+    
     this.applyWallTint(config.wallTint);
     
     this.updateFloorTexture(config.floorTextureUrl);
+    this.updateStandTexture(config.standTextureUrl);
+    this.updateGateTexture(config.gateTextureUrl);
+    
+    this.updateRenderQuality(config.renderQuality); 
     
     // Audio Init
     this.engineSound = new THREE.PositionalAudio(this.audioListener);
@@ -266,6 +365,136 @@ export class ThreeSceneService {
     window.addEventListener('resize', this.onResize.bind(this));
   }
   
+  // --- 3D Menu Logic ---
+  
+  private buildMenuWorld() {
+      this.menuGroup.clear();
+      this.menuGates = [];
+      
+      const sections = this.store.config().sections;
+      const spacing = 8;
+      const startX = -((sections.length - 1) * spacing) / 2;
+      
+      this.gateMaterial = new THREE.ShaderMaterial({
+          uniforms: {
+              tDiffuse: { value: null },
+              accentColor: { value: new THREE.Color(this.store.config().lighting.accentColor) }
+          },
+          vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            uniform sampler2D tDiffuse;
+            uniform vec3 accentColor;
+            varying vec2 vUv;
+            void main() {
+                vec4 texel = texture2D(tDiffuse, vUv);
+                float gray = dot(texel.rgb, vec3(0.299, 0.587, 0.114)); 
+                vec3 finalColor = vec3(gray);
+                if (gray > 0.8) {
+                    finalColor = mix(finalColor, accentColor, 0.5); 
+                }
+                gl_FragColor = vec4(finalColor, texel.a);
+            }
+          `,
+          transparent: true,
+          side: THREE.DoubleSide
+      });
+
+      sections.forEach((sec, idx) => {
+          const group = new THREE.Group();
+          group.position.x = startX + (idx * spacing);
+          group.userData['sectionIndex'] = idx; 
+          
+          const gateGeo = new THREE.PlaneGeometry(5, 8);
+          const gate = new THREE.Mesh(gateGeo, this.gateMaterial);
+          gate.position.y = 4;
+          group.add(gate);
+          this.menuGates.push(gate); 
+          gate.userData['parentGroup'] = group; 
+
+          const frameGeo = new THREE.BoxGeometry(5.2, 8.2, 0.2);
+          const frameMat = new THREE.MeshStandardMaterial({ 
+              color: 0x111111, roughness: 0.2, metalness: 0.9 
+          });
+          const frame = new THREE.Mesh(frameGeo, frameMat);
+          frame.position.y = 4;
+          frame.position.z = -0.1;
+          group.add(frame);
+          
+          const canvas = document.createElement('canvas');
+          canvas.width = 512; canvas.height = 128;
+          const ctx = canvas.getContext('2d')!;
+          ctx.fillStyle = 'rgba(0,0,0,0)';
+          ctx.fillRect(0,0,512,128);
+          ctx.font = 'bold 60px "Space Grotesk", sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = 'white';
+          ctx.fillText(sec.label, 256, 80);
+          
+          const labelTex = new THREE.CanvasTexture(canvas);
+          const labelMat = new THREE.SpriteMaterial({ map: labelTex });
+          const sprite = new THREE.Sprite(labelMat);
+          sprite.position.y = 9;
+          sprite.scale.set(5, 1.25, 1);
+          group.add(sprite);
+
+          this.menuGroup.add(group);
+      });
+      
+      const grid = new THREE.GridHelper(100, 50, 0x333333, 0x111111);
+      this.menuGroup.add(grid);
+  }
+  
+  private updateGateTexture(url: string) {
+      if (!this.gateMaterial) return;
+      this.store.incrementLoading();
+      this.textureLoader.load(url, (tex) => {
+          this.gateMaterial.uniforms['tDiffuse'].value = tex;
+          this.gateMaterial.needsUpdate = true;
+          this.store.decrementLoading();
+      }, undefined, () => this.store.decrementLoading());
+  }
+  
+  private enterMenuMode() {
+      this.menuGroup.visible = true;
+      this.showroomGroup.visible = false;
+      this.fleetGroup.visible = false;
+      this.charGroup.visible = false;
+      this.hotspotGroup.visible = false;
+      if (this.controls) this.controls.enabled = false; 
+  }
+  
+  private exitMenuMode() {
+      this.menuGroup.visible = false;
+      this.showroomGroup.visible = true;
+      this.fleetGroup.visible = true;
+  }
+  
+  handleClick(event: MouseEvent) {
+      if (!this.store.isMenuOpen()) return;
+      
+      this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      
+      this.raycaster.setFromCamera(this.mouse, this.camera);
+      
+      const intersects = this.raycaster.intersectObjects(this.menuGates);
+      if (intersects.length > 0) {
+          const hit = intersects[0].object;
+          const group = hit.userData['parentGroup'];
+          if (group) {
+              const idx = group.userData['sectionIndex'];
+              this.store.activeSectionIndex.set(idx);
+              this.store.isMenuOpen.set(false);
+          }
+      }
+  }
+
   // --- Audio Logic ---
   
   private updateCarAudio(car: CarConfig) {
@@ -273,7 +502,6 @@ export class ThreeSceneService {
       
       const activeGroup = this.carMap.get(car.id);
       
-      // Detach from previous parent if needed (though we'll reattach to new active group)
       if (this.engineSound.parent) this.engineSound.parent.remove(this.engineSound);
       if (this.ignitionSound.parent) this.ignitionSound.parent.remove(this.ignitionSound);
 
@@ -282,20 +510,17 @@ export class ThreeSceneService {
           activeGroup.add(this.ignitionSound);
       }
 
-      // Load buffers if URLs present
       if (car.driveSoundUrl && this.currentEngineSoundId !== car.id) {
-          // Keep track if engine was running before switching
           const wasRunning = this.isEngineRunning;
 
           if (this.engineSound.isPlaying) this.engineSound.stop();
           this.store.incrementLoading();
           this.audioLoader.load(car.driveSoundUrl, (buffer) => {
-              this.currentEngineSoundId = car.id; // Update tracked ID
+              this.currentEngineSoundId = car.id; 
               this.engineSound.setBuffer(buffer);
               this.engineSound.setLoop(true);
               this.engineSound.setVolume(0.5);
               
-              // Resume automatically if it was running
               if (wasRunning && !this.engineSound.isPlaying) {
                   this.engineSound.play();
               }
@@ -303,7 +528,6 @@ export class ThreeSceneService {
               this.store.decrementLoading();
           }, undefined, () => this.store.decrementLoading());
       } else if (car.driveSoundUrl && this.currentEngineSoundId === car.id) {
-          // Re-affirm state if same car
           if (this.isEngineRunning && !this.engineSound.isPlaying && this.engineSound.buffer) {
                this.engineSound.play();
           }
@@ -334,7 +558,6 @@ export class ThreeSceneService {
 
   private startEngine() {
       if (this.isEngineRunning) return;
-      
       this.isEngineRunning = true;
 
       if (this.ignitionSound.buffer) {
@@ -357,7 +580,7 @@ export class ThreeSceneService {
       if (this.engineSound.isPlaying) this.engineSound.stop();
       if (this.ignitionSound.isPlaying) this.ignitionSound.stop();
       this.isEngineRunning = false;
-      this.speed = 0; // Kill speed
+      this.speed = 0; 
   }
 
   // ---
@@ -369,18 +592,32 @@ export class ThreeSceneService {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
   
-  private updateRenderQuality(quality: 'high' | 'low') {
+  private updateRenderQuality(quality: 'ultra' | 'high' | 'low') {
       if (!this.renderer) return;
-      if (quality === 'high') {
+      
+      if (quality === 'ultra') {
+          this.renderer.setPixelRatio(window.devicePixelRatio); 
+          this.renderer.shadowMap.enabled = true;
+          this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+          if (this.dirLight) {
+              this.dirLight.shadow.mapSize.width = 4096;
+              this.dirLight.shadow.mapSize.height = 4096;
+              this.dirLight.shadow.bias = -0.00005; // Refine shadow bias for high res
+          }
+      } else if (quality === 'high') {
           this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.0)); 
           this.renderer.shadowMap.enabled = true;
           this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+          if (this.dirLight) {
+              this.dirLight.shadow.mapSize.width = 2048;
+              this.dirLight.shadow.mapSize.height = 2048;
+              this.dirLight.shadow.bias = -0.0001;
+          }
       } else {
           this.renderer.setPixelRatio(1.0); 
           this.renderer.shadowMap.enabled = false;
       }
       
-      // Force material update for shadow reconfiguration
       this.scene.traverse((obj) => {
           if ((obj as THREE.Mesh).isMesh) {
               const mesh = obj as THREE.Mesh;
@@ -399,26 +636,21 @@ export class ThreeSceneService {
       const currentIds = new Set(this.envObjectMap.keys());
       const newIds = new Set(envs.map(e => e.id));
 
-      // 1. Remove deleted
       for (const id of currentIds) {
           if (!newIds.has(id)) {
               const obj = this.envObjectMap.get(id);
               if (obj) {
                   this.wallModelGroup.remove(obj);
-                  // Dispose logic if needed
               }
               this.envObjectMap.delete(id);
           }
       }
 
-      // 2. Add or Update
       for (const env of envs) {
           if (this.envObjectMap.has(env.id)) {
-              // Update existing
               const anchor = this.envObjectMap.get(env.id)!;
               this.applyEnvironmentTransform(env, anchor);
           } else {
-              // New
               this.loadEnvironmentModel(env);
           }
       }
@@ -436,18 +668,14 @@ export class ThreeSceneService {
 
       this.store.incrementLoading();
       this.gltfLoader.load(env.url, (gltf) => {
-          // Verify anchor still exists (wasn't deleted during load)
           if (this.envObjectMap.has(env.id)) {
               const model = gltf.scene;
-              
-              // Enable shadows for environment
               model.traverse((child: any) => {
                   if (child.isMesh) {
                       child.castShadow = true;
                       child.receiveShadow = true;
                   }
               });
-
               anchor.add(model);
           }
           this.store.decrementLoading();
@@ -460,6 +688,72 @@ export class ThreeSceneService {
   private applyEnvironmentTransform(env: EnvironmentItem, obj: THREE.Object3D) {
       obj.scale.set(env.scale, env.scale, env.scale);
       obj.position.set(env.position[0], env.position[1], env.position[2]);
+  }
+
+  // --- Scene Objects Logic ---
+
+  private syncSceneObjects(objects: SceneObject[]) {
+      const currentIds = new Set(this.sceneObjectMap.keys());
+      const newIds = new Set(objects.map(o => o.id));
+
+      for (const id of currentIds) {
+          if (!newIds.has(id)) {
+              const obj = this.sceneObjectMap.get(id);
+              if (obj) {
+                  this.sceneObjectsGroup.remove(obj);
+              }
+              this.sceneObjectMap.delete(id);
+          }
+      }
+
+      for (const objData of objects) {
+          if (this.sceneObjectMap.has(objData.id)) {
+              const group = this.sceneObjectMap.get(objData.id)!;
+              if (group.userData['url'] !== objData.url) {
+                  this.sceneObjectsGroup.remove(group);
+                  this.sceneObjectMap.delete(objData.id);
+                  this.loadSceneObject(objData);
+              } else {
+                  this.applySceneObjectTransform(objData, group);
+              }
+          } else {
+              this.loadSceneObject(objData);
+          }
+      }
+  }
+
+  private loadSceneObject(objData: SceneObject) {
+      const group = new THREE.Group();
+      group.name = objData.id;
+      group.userData['url'] = objData.url;
+      
+      this.applySceneObjectTransform(objData, group);
+      this.sceneObjectsGroup.add(group);
+      this.sceneObjectMap.set(objData.id, group);
+
+      this.store.incrementLoading();
+      this.gltfLoader.load(objData.url, (gltf) => {
+          if (this.sceneObjectMap.has(objData.id)) {
+              const model = gltf.scene;
+              model.traverse((child: any) => {
+                  if (child.isMesh) {
+                      child.castShadow = true;
+                      child.receiveShadow = true;
+                  }
+              });
+              group.add(model);
+          }
+          this.store.decrementLoading();
+      }, undefined, (err) => {
+          console.error('Failed to load scene object', err);
+          this.store.decrementLoading();
+      });
+  }
+
+  private applySceneObjectTransform(data: SceneObject, group: THREE.Object3D) {
+      group.position.set(data.position[0], data.position[1], data.position[2]);
+      group.rotation.set(data.rotation[0], data.rotation[1], data.rotation[2]);
+      group.scale.set(data.scale[0], data.scale[1], data.scale[2]);
   }
 
   // --- Fleet Logic ---
@@ -512,13 +806,12 @@ export class ThreeSceneService {
       const activeCar = this.store.activeCar();
       const activeGroup = this.carMap.get(activeCar.id);
       if (activeGroup) {
-          this.setupActiveCarPhysics(activeGroup);
+          this.analyzeCarStructure(activeGroup);
           if (this.underglowLight.parent !== activeGroup) {
              activeGroup.add(this.underglowLight);
           }
           this.underglowLight.color.set(activeCar.underglowColor || activeCar.color);
           
-          // Re-attach audio to new active car
           if (this.engineSound && this.ignitionSound) {
              activeGroup.add(this.engineSound);
              activeGroup.add(this.ignitionSound);
@@ -558,7 +851,7 @@ export class ThreeSceneService {
               });
               group.add(model);
               if (this.store.activeCar().id === carConfig.id) {
-                  this.setupActiveCarPhysics(group);
+                  this.analyzeCarStructure(group);
               }
               this.store.decrementLoading();
           }, undefined, (err) => {
@@ -568,7 +861,7 @@ export class ThreeSceneService {
       } else {
           this.buildProceduralCar(group, carConfig);
           if (this.store.activeCar().id === carConfig.id) {
-              this.setupActiveCarPhysics(group);
+              this.analyzeCarStructure(group);
           }
       }
   }
@@ -620,23 +913,78 @@ export class ThreeSceneService {
       }
   }
 
-  private setupActiveCarPhysics(group: THREE.Group) {
+  private analyzeCarStructure(group: THREE.Group) {
       this.currentCarParams.wheels = [];
+      this.currentCarParams.bodyParts = [];
+      this.currentCarParams.hoodParts = [];
+      this.currentCarParams.chassisParts = [];
       this.currentCarParams.originalPositions.clear();
+      this.currentCarParams.originalRotations.clear();
+
+      const box = new THREE.Box3().setFromObject(group);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+      
+      const thresholdY = box.min.y + (size.y * 0.35); 
+      const frontZ = center.z + (size.z * 0.25); 
+
       group.traverse((obj) => {
           if (obj instanceof THREE.Mesh || obj instanceof THREE.Group) {
-              if (obj.userData['origPos']) {
-                  this.currentCarParams.originalPositions.set(obj, obj.userData['origPos']);
+              if(obj === group) return;
+              
+              const hasGeo = obj instanceof THREE.Mesh;
+              const isWheelGroup = obj.name.toLowerCase().includes('wheel') || obj.name.toLowerCase().includes('rim');
+              
+              if (!hasGeo && !isWheelGroup) return;
+
+              if (!this.currentCarParams.originalPositions.has(obj)) {
+                  this.currentCarParams.originalPositions.set(obj, obj.position.clone());
+                  this.currentCarParams.originalRotations.set(obj, obj.rotation.clone());
               }
-              const lower = obj.name.toLowerCase();
-              if (lower.includes('wheel') || lower.includes('rim') || lower.includes('tire')) {
-                  if (obj.parent === group) {
-                       this.currentCarParams.wheels.push(obj);
+
+              const name = obj.name.toLowerCase();
+              
+              if (name.includes('wheel') || name.includes('tire') || name.includes('rim') || name.includes('brake')) {
+                  if (obj.parent === group || (obj.parent && obj.parent.parent === group)) {
+                      // Fix: Set rotation order to YXZ to correctly apply steering (Y) before rolling (X)
+                      obj.rotation.order = 'YXZ';
+                      
+                      // Identify if this is a front wheel based on Z position relative to car center
+                      // Assuming +Z is forward based on movement logic
+                      const worldPos = new THREE.Vector3();
+                      obj.getWorldPosition(worldPos);
+                      // If Z is greater than center Z, it's forward
+                      obj.userData['isFront'] = worldPos.z > center.z; 
+                      
+                      this.currentCarParams.wheels.push(obj);
                   }
+                  return;
+              }
+              
+              const worldPos = new THREE.Vector3();
+              obj.getWorldPosition(worldPos);
+
+              if (name.includes('hood') || name.includes('bonnet')) {
+                  this.currentCarParams.hoodParts.push(obj);
+                  return;
+              }
+              
+              if (worldPos.y > thresholdY) {
+                  if (worldPos.z > frontZ && worldPos.y > (center.y + size.y*0.1)) {
+                       this.currentCarParams.hoodParts.push(obj);
+                  } else {
+                       this.currentCarParams.bodyParts.push(obj);
+                  }
+              } else {
+                  this.currentCarParams.chassisParts.push(obj);
               }
           }
       });
-      this.currentCarParams.wheels.sort((a, b) => b.position.z - a.position.z);
+      
+      // Remove duplicates just in case
+      this.currentCarParams.wheels = [...new Set(this.currentCarParams.wheels)];
   }
 
   private renderHotspots() {
@@ -699,11 +1047,10 @@ export class ThreeSceneService {
       this.charGroup.position.set(charConfig.position[0], charConfig.position[1], charConfig.position[2]);
       
       if (this.controls) {
-          this.controls.enabled = false; // Disable OrbitControls for Chase Cam
+          this.controls.enabled = false; 
       }
 
       if (this.camera) {
-          // Snap camera behind character immediately to avoid jump
           const idealOffset = new THREE.Vector3(0, 2.5, -4);
           idealOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.charRotation);
           this.camera.position.copy(this.charGroup.position).add(idealOffset);
@@ -741,8 +1088,7 @@ export class ThreeSceneService {
           object.traverse((child: any) => {
               if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
           });
-          // @ts-ignore
-          const animations = object.animations || [];
+          const animations = (object as any).animations || [];
           if (animations && animations.length > 0) {
               this.charMixer = new THREE.AnimationMixer(object);
               animations.forEach((clip: THREE.AnimationClip) => {
@@ -763,7 +1109,7 @@ export class ThreeSceneService {
 
       if (type === 'glb') {
           this.gltfLoader.load(url, (gltf) => {
-             // @ts-ignore 
+             // @ts-ignore
              gltf.scene.animations = gltf.animations; 
              onLoad(gltf.scene);
           }, undefined, () => this.store.decrementLoading());
@@ -834,18 +1180,57 @@ export class ThreeSceneService {
   private animateCharacter(delta: number, moveSpeed: number) {
       if (this.charMixer) {
           this.charMixer.update(delta);
-          const idleAction = Object.values(this.charActions).find(a => a.getClip().name.toLowerCase().includes('idle'));
-          const runAction = Object.values(this.charActions).find(a => a.getClip().name.toLowerCase().includes('run') || a.getClip().name.toLowerCase().includes('walk'));
+          const actions = Object.values(this.charActions);
+          if (actions.length === 0) return;
+
+          let idleAction = actions.find(a => a.getClip().name.toLowerCase().includes('idle'));
+          let runAction = actions.find(a => a.getClip().name.toLowerCase().includes('run') || a.getClip().name.toLowerCase().includes('walk'));
+
+          if (!idleAction && actions.length > 0) idleAction = actions[0];
+          if (!runAction && actions.length > 1) runAction = actions[1];
+          if (!runAction && idleAction) runAction = idleAction;
+
           if (idleAction && runAction) {
-              if (moveSpeed > 0.1) {
-                  if (!runAction.isRunning()) { idleAction.fadeOut(0.2); runAction.reset().fadeIn(0.2).play(); }
+              const isMoving = moveSpeed > 0.1;
+              const activeAction = isMoving ? runAction : idleAction;
+              const otherAction = isMoving ? idleAction : runAction;
+
+              if (activeAction !== otherAction) {
+                  if (!activeAction.isRunning()) {
+                      otherAction.fadeOut(0.2);
+                      activeAction.reset().fadeIn(0.2).play();
+                  }
               } else {
-                  if (!idleAction.isRunning()) { runAction.fadeOut(0.2); idleAction.reset().fadeIn(0.2).play(); }
+                  if (!activeAction.isRunning()) activeAction.play();
+              }
+              
+              if (isMoving) {
+                  const baseScale = (activeAction === idleAction && actions.length === 1) ? 2.0 : 1.0;
+                  activeAction.setEffectiveTimeScale(baseScale + (moveSpeed * 0.5));
+              } else {
+                  activeAction.setEffectiveTimeScale(1.0);
               }
           }
           return;
       }
+
       const time = this.clock.getElapsedTime();
+      
+      if (Object.keys(this.charMeshes).length === 0 && this.charGroup.userData['modelType'] !== 'none') {
+           if (moveSpeed > 0.1) {
+               const freq = 15;
+               const amp = 0.08;
+               const baseY = this.store.config().character.position[1];
+               this.charGroup.position.y = baseY + Math.abs(Math.sin(time * freq)) * amp;
+               this.charGroup.rotation.x = 0.15;
+           } else {
+               const baseY = this.store.config().character.position[1];
+               this.charGroup.position.y = THREE.MathUtils.lerp(this.charGroup.position.y, baseY, delta * 5);
+               this.charGroup.rotation.x = THREE.MathUtils.lerp(this.charGroup.rotation.x, 0, delta * 5);
+           }
+           return;
+      }
+
       if (moveSpeed > 0.1) {
           const freq = moveSpeed > 0.6 ? 15 : 8; 
           const amp = moveSpeed > 0.6 ? 0.8 : 0.5; 
@@ -869,8 +1254,6 @@ export class ThreeSceneService {
       }
   }
 
-  // --- Environment ---
-
   private updateFloorTexture(url: string) {
     if (!this.floorMaterial) return;
     this.store.incrementLoading();
@@ -887,21 +1270,42 @@ export class ThreeSceneService {
       this.store.decrementLoading();
     }, undefined, () => this.store.decrementLoading());
   }
+
+  private updateStandTexture(url: string) {
+    if (!this.standMesh) return;
+    const mat = this.standMesh.material as THREE.MeshStandardMaterial;
+
+    if (!url) {
+        mat.map = null;
+        mat.needsUpdate = true;
+        return;
+    }
+    
+    this.store.incrementLoading();
+    new THREE.TextureLoader().load(url, (map) => {
+      map.wrapS = THREE.RepeatWrapping;
+      map.wrapT = THREE.RepeatWrapping;
+      map.repeat.set(2, 2);
+      map.colorSpace = THREE.SRGBColorSpace;
+      if (this.renderer) map.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+      map.minFilter = THREE.LinearMipmapLinearFilter;
+      map.magFilter = THREE.LinearFilter;
+      
+      mat.map = map;
+      mat.needsUpdate = true;
+      this.store.decrementLoading();
+    }, undefined, () => this.store.decrementLoading());
+  }
   
   private applyWallTint(tint: number) {
      if (!this.wallMesh) return;
-     
-     // The wall is now a Black Mirror with adjustable opacity
      const mat = this.wallMesh.material as THREE.MeshPhysicalMaterial;
      mat.opacity = tint;
-     
-     // Hardcoded Black Mirror Look
      mat.color.set(0x000000);
      mat.metalness = 1.0;
      mat.roughness = 0.0;
      mat.clearcoat = 1.0;
      mat.transparent = true;
-     
      mat.needsUpdate = true;
   }
 
@@ -909,9 +1313,14 @@ export class ThreeSceneService {
     this.showroomGroup.clear();
     const floorSize = 400;
     const floorGeo = new THREE.PlaneGeometry(floorSize, floorSize);
+    
+    // Enhanced Reflector for high quality floor reflections
     const reflector = new Reflector(floorGeo, {
-      clipBias: 0.003, textureWidth: window.innerWidth, textureHeight: window.innerHeight,
-      color: 0x444444, multisample: 2
+      clipBias: 0.003, 
+      textureWidth: window.innerWidth * 1.5, // Super-sampling for reflection
+      textureHeight: window.innerHeight * 1.5,
+      color: 0x555555, 
+      multisample: 4 // Reduced aliasing
     });
     reflector.rotation.x = -Math.PI / 2;
     reflector.position.y = -0.02;
@@ -947,17 +1356,15 @@ export class ThreeSceneService {
 
     this.buildNeonStand();
 
-    // WALLS - Cylinder (Black Mirror)
     const wallRadius = 80;
     const wallHeight = 40;
     const wallGeo = new THREE.CylinderGeometry(wallRadius, wallRadius, wallHeight, 64, 1, true);
     
-    // Initial Material (Will be updated by applyWallTint)
     const wallMat = new THREE.MeshPhysicalMaterial({
       color: 0x000000, 
       metalness: 1.0, 
       roughness: 0.0, 
-      transparent: true,
+      transparent: true, 
       opacity: 0.95,
       side: THREE.DoubleSide,
       clearcoat: 1.0
@@ -967,18 +1374,13 @@ export class ThreeSceneService {
     this.wallMesh.position.y = wallHeight / 2;
     this.showroomGroup.add(this.wallMesh);
 
-    // 3D MODEL CONTAINER (OUTSIDE)
-    // We add it to showroomGroup, but because we scale it HUGE, it acts as background
     this.showroomGroup.add(this.wallModelGroup);
     
-    // Initial Sync handled in init()
-
-    // VERTICAL NEONS (White)
     const neonCount = 12;
     const neonRadius = wallRadius - 2; 
     const neonHeight = wallHeight;
     const neonGeo = new THREE.CylinderGeometry(0.3, 0.3, neonHeight, 16);
-    const neonMat = new THREE.MeshBasicMaterial({ color: 0xffffff }); // WHITE NEON
+    const neonMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     
     for (let i = 0; i < neonCount; i++) {
         const theta = (i / neonCount) * Math.PI * 2;
@@ -1004,10 +1406,10 @@ export class ThreeSceneService {
   private buildNeonStand() {
       const standGeo = new THREE.CylinderGeometry(4, 4.5, 0.2, 64);
       const standMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8, metalness: 0.5 });
-      const stand = new THREE.Mesh(standGeo, standMat);
-      stand.position.y = 0.1;
-      stand.receiveShadow = true;
-      this.showroomGroup.add(stand);
+      this.standMesh = new THREE.Mesh(standGeo, standMat);
+      this.standMesh.position.y = 0.1;
+      this.standMesh.receiveShadow = true;
+      this.showroomGroup.add(this.standMesh);
 
       const rimGeo = new THREE.TorusGeometry(4.5, 0.05, 16, 100);
       const rimMat = new THREE.MeshBasicMaterial({ color: this.store.config().lighting.accentColor });
@@ -1023,21 +1425,45 @@ export class ThreeSceneService {
 
   private updateLights(config: any) {
     this.lightsGroup.clear();
-    const ambient = new THREE.AmbientLight(0xffffff, config.lighting.ambient);
+    
+    // Increased Ambient for global illumination approximation
+    const ambient = new THREE.AmbientLight(0xffffff, config.lighting.ambient * 2.0);
     this.lightsGroup.add(ambient);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, config.lighting.intensity);
-    dirLight.position.set(-50, 100, -50);
-    dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 2048;
-    dirLight.shadow.mapSize.height = 2048;
-    this.lightsGroup.add(dirLight);
+    // High intensity Key Light
+    this.dirLight = new THREE.DirectionalLight(0xffffff, config.lighting.intensity * 2.5);
+    this.dirLight.position.set(-50, 100, -50);
+    this.dirLight.castShadow = true;
+    
+    // High-res shadow map properties for soft shadows
+    this.dirLight.shadow.mapSize.width = 4096;
+    this.dirLight.shadow.mapSize.height = 4096;
+    this.dirLight.shadow.camera.near = 0.1;
+    this.dirLight.shadow.camera.far = 500;
+    this.dirLight.shadow.camera.left = -50;
+    this.dirLight.shadow.camera.right = 50;
+    this.dirLight.shadow.camera.top = 50;
+    this.dirLight.shadow.camera.bottom = -50;
+    this.dirLight.shadow.bias = -0.0001;
+    this.dirLight.shadow.radius = 4; // Softens the shadow edges (PCFSoft)
+    
+    this.lightsGroup.add(this.dirLight);
 
-    const spot = new THREE.SpotLight(0xffffff, config.lighting.intensity * 80);
-    spot.position.set(0, 20, 10);
-    spot.angle = 0.5; spot.penumbra = 0.5; spot.decay = 2; spot.distance = 60;
+    // Rim Light / Spot Light
+    const spot = new THREE.SpotLight(0xffffff, config.lighting.intensity * 120);
+    spot.position.set(0, 30, 20);
+    spot.angle = 0.6; 
+    spot.penumbra = 0.5; 
+    spot.decay = 2; 
+    spot.distance = 100;
     spot.castShadow = true;
+    spot.shadow.bias = -0.0001;
     this.lightsGroup.add(spot);
+    
+    // Fill Light
+    const fillLight = new THREE.DirectionalLight(0xaaccff, 0.5);
+    fillLight.position.set(50, 20, 50);
+    this.lightsGroup.add(fillLight);
   }
 
   handleKeyDown(key: string) { this.keys[key.toLowerCase()] = true; }
@@ -1049,40 +1475,41 @@ export class ThreeSceneService {
     
     const delta = this.clock.getDelta();
     const section = this.store.activeSection();
+    const isMenuOpen = this.store.isMenuOpen();
     const joystick = this.store.joystickState();
     const activeCarConfig = this.store.activeCar();
     const activeGroup = this.carMap.get(activeCarConfig.id);
     
-    // --- Audio Pitch Modulation ---
+    if (isMenuOpen) {
+        const targetPos = new THREE.Vector3(0, 5, 20);
+        const lookAt = new THREE.Vector3(0, 4, 0);
+        this.camera.position.lerp(targetPos, delta * 3);
+        this.camera.lookAt(lookAt);
+        this.renderer.render(this.scene, this.camera);
+        return; 
+    }
+    
     if (this.isEngineRunning && this.engineSound && this.engineSound.isPlaying) {
-        // Simple pitch shift: 0.5 (idle) to 1.5 (high speed)
-        // Normalized speed approx 0 to 80
         const normalizedSpeed = Math.abs(this.speed) / 80;
         const targetRate = 0.8 + (normalizedSpeed * 0.8);
         this.engineSound.setPlaybackRate(targetRate);
     }
 
-    // --- LINEUP LOGIC ---
     if (section.id !== 'drive' && section.id !== 'walk') {
         const fleet = this.store.config().fleet;
         const activeIndex = this.store.activeCarIndex();
-        const spacing = 12; // Gap between cars
+        const spacing = 12;
 
         fleet.forEach((car, index) => {
             const group = this.carMap.get(car.id);
             if (!group) return;
 
             group.visible = true;
-            
-            // Calculate target positions
             const offsetIndex = index - activeIndex;
             const targetX = offsetIndex * spacing;
-            const targetY = (offsetIndex === 0) ? 0.25 : 0; // Active car on stand
-            
-            // Continuous Loop for active car
+            const targetY = (offsetIndex === 0) ? 0.25 : 0; 
             const targetRotY = (offsetIndex === 0) ? (this.clock.getElapsedTime() * 0.1) : 0; 
             
-            // Lerp
             group.position.x = THREE.MathUtils.lerp(group.position.x, targetX, delta * 4);
             group.position.z = THREE.MathUtils.lerp(group.position.z, 0, delta * 4);
             group.position.y = THREE.MathUtils.lerp(group.position.y, targetY, delta * 4);
@@ -1097,20 +1524,42 @@ export class ThreeSceneService {
             group.rotation.z = 0;
         });
 
-        // Explode Tech Mode
         if (activeGroup) {
-            const targetExplode = section.id === 'engineering' ? 1 : 0;
-            this.explodeFactor = THREE.MathUtils.lerp(this.explodeFactor, targetExplode, delta * 2);
+            const isTechMode = section.id === 'engineering';
+            const targetExplode = isTechMode ? 1 : 0;
+            this.explodeFactor = THREE.MathUtils.lerp(this.explodeFactor, targetExplode, delta * 3);
+
             if (this.explodeFactor > 0.01) {
-                this.currentCarParams.originalPositions.forEach((origPos, obj) => {
-                     const dir = origPos.clone().normalize();
-                     const offset = dir.multiplyScalar(this.explodeFactor * 1.5); 
-                     obj.position.copy(origPos).add(offset);
+                const val = this.explodeFactor;
+                this.currentCarParams.bodyParts.forEach(obj => {
+                    const orig = this.currentCarParams.originalPositions.get(obj);
+                    if (orig) obj.position.copy(orig).add(new THREE.Vector3(0, 1.5 * val, 0));
                 });
-            } else if (this.explodeFactor < 0.01 && targetExplode === 0) {
-                 // Snap back
-                 this.currentCarParams.originalPositions.forEach((origPos, obj) => {
-                     obj.position.copy(origPos);
+                this.currentCarParams.hoodParts.forEach(obj => {
+                    const orig = this.currentCarParams.originalPositions.get(obj);
+                    const origRot = this.currentCarParams.originalRotations.get(obj);
+                    if (orig && origRot) {
+                        obj.position.copy(orig).add(new THREE.Vector3(0, 1.2 * val, 0.5 * val));
+                        obj.rotation.x = origRot.x - (0.5 * val); 
+                    }
+                });
+                this.currentCarParams.wheels.forEach(obj => {
+                    const orig = this.currentCarParams.originalPositions.get(obj);
+                    if (orig) {
+                        const sign = orig.x > 0 ? 1 : -1;
+                        obj.position.copy(orig).add(new THREE.Vector3(sign * 0.8 * val, 0, 0));
+                    }
+                });
+                this.currentCarParams.chassisParts.forEach(obj => {
+                     const orig = this.currentCarParams.originalPositions.get(obj);
+                     if (orig) obj.position.copy(orig); 
+                });
+            } else if (this.explodeFactor <= 0.01 && !isTechMode) {
+                 this.currentCarParams.originalPositions.forEach((pos, obj) => {
+                     obj.position.copy(pos);
+                 });
+                 this.currentCarParams.originalRotations.forEach((rot, obj) => {
+                     obj.rotation.copy(rot);
                  });
             }
         }
@@ -1118,9 +1567,7 @@ export class ThreeSceneService {
         if (this.controls) this.controls.update();
     }
 
-    // --- DRIVE MODE ---
     if (section.id === 'drive' && activeGroup) {
-        // Hide others
         this.carMap.forEach((g) => {
             if (g !== activeGroup) g.visible = false;
         });
@@ -1174,13 +1621,17 @@ export class ThreeSceneService {
         this.camera.lookAt(lookAtPos);
         
         const rotSpeed = this.speed * delta * 2.0; 
-        this.currentCarParams.wheels.forEach((w, i) => {
-            w.rotateX(rotSpeed);
-            if (i < 2) w.rotation.y = this.steering; 
+        this.currentCarParams.wheels.forEach((w) => {
+            w.rotation.x += rotSpeed;
+            // Apply steering only to wheels identified as front
+            if (w.userData['isFront']) {
+                w.rotation.y = this.steering; 
+            } else {
+                w.rotation.y = 0;
+            }
         });
     }
 
-    // --- WALK MODE ---
     if (section.id === 'walk') {
         if (activeGroup) activeGroup.visible = true;
         
@@ -1205,16 +1656,12 @@ export class ThreeSceneService {
         
         this.animateCharacter(delta, actualSpeed);
         
-        // --- CHASE CAMERA LOGIC (Same as Car) ---
-        // Offset: Behind and slightly above character
         const idealOffset = new THREE.Vector3(0, 2.5, -4); 
         idealOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.charRotation);
         idealOffset.add(this.charGroup.position);
         
-        // Smooth follow
         this.camera.position.lerp(idealOffset, delta * 3.0);
         
-        // Look ahead of character
         const lookAtPos = new THREE.Vector3(0, 1.4, 5); 
         lookAtPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.charRotation);
         lookAtPos.add(this.charGroup.position);

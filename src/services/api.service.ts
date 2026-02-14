@@ -6,18 +6,26 @@ import { AppConfig, CarConfig } from './data.types';
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
-  private http = inject(HttpClient);
+  private http: HttpClient = inject(HttpClient);
   
   // Use relative path. The Angular CLI proxy (proxy.conf.json) will forward this 
   // to http://localhost:3001 automatically.
   private baseUrl = '/api'; 
+  
+  // Debounce error logging
+  private hasLoggedFetchError = false;
+  private hasLoggedSaveError = false;
 
   async getSettings(): Promise<Partial<AppConfig> | null> {
     try {
       const data = await firstValueFrom(this.http.get<Partial<AppConfig>>(`${this.baseUrl}/settings`));
+      this.hasLoggedFetchError = false; // Reset on success
       return data;
     } catch (e) {
-      console.warn(`API: Failed to fetch settings. Ensure server is running and proxy is configured.`, e);
+      if (!this.hasLoggedFetchError) {
+          console.warn(`API: Failed to fetch settings. Ensure server is running and proxy is configured.`);
+          this.hasLoggedFetchError = true;
+      }
       return null; 
     }
   }
@@ -25,8 +33,12 @@ export class ApiService {
   async saveSettings(settings: any): Promise<void> {
     try {
       await firstValueFrom(this.http.post(`${this.baseUrl}/settings`, settings));
+      this.hasLoggedSaveError = false;
     } catch (e) { 
-      console.warn('API: Failed to save settings.', e); 
+      if (!this.hasLoggedSaveError) {
+          console.warn('API: Failed to save settings (Backend Offline/Unreachable).'); 
+          this.hasLoggedSaveError = true;
+      }
     }
   }
 

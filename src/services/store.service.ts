@@ -1,6 +1,6 @@
 
 import { Injectable, signal, computed, effect, inject } from '@angular/core';
-import { AppConfig, DEFAULT_CONFIG, CarConfig, Hotspot, EnvironmentItem } from './data.types';
+import { AppConfig, DEFAULT_CONFIG, CarConfig, Hotspot, EnvironmentItem, SceneObject } from './data.types';
 import { DbService } from './db.service';
 import { ApiService } from './api.service';
 
@@ -10,11 +10,15 @@ export class StoreService {
   api = inject(ApiService);
 
   // Main State
-  config = signal<AppConfig>(DEFAULT_CONFIG);
+  config = signal<AppConfig>(JSON.parse(JSON.stringify(DEFAULT_CONFIG))); // Deep copy to avoid mutating default
   
   // Loading State
   private loadingCount = signal(0);
   isLoading = computed(() => this.loadingCount() > 0);
+  
+  // Error Tracking
+  private consecutiveErrors = 0;
+  private pollingInterval: any;
 
   incrementLoading() {
     this.loadingCount.update(c => c + 1);
@@ -40,6 +44,7 @@ export class StoreService {
   isWalking = signal(false);
   isCustomizing = signal(false);
   isAdminOpen = signal(false);
+  isMenuOpen = signal(false); // New 3D Menu State
   
   activeHotspotId = signal<string | null>(null);
   customizationState = signal<Record<string, string>>({});
@@ -48,48 +53,106 @@ export class StoreService {
   constructor() {
       this.initializeData();
 
-      // Auto-save Global Settings
+      // Start Polling for updates (Every 3 seconds)
+      this.startPolling();
+
+      // Auto-save Global Settings Effect
       effect(() => {
           const current = this.config();
-          const globalSettings = {
-             lighting: current.lighting,
-             audio: current.audio,
-             texts: current.texts,
-             character: current.character, 
-             logoAssetId: current.logoAssetId,
-             logoUrl: current.logoUrl, // Save URL for server
-             floorTextureAssetId: current.floorTextureAssetId,
-             floorTextureUrl: current.floorTextureUrl, // Save URL for server
-             
-             // Environment settings
-             environments: current.environments,
-             activeEnvironmentId: current.activeEnvironmentId,
-
-             activeCarIndex: current.activeCarIndex
-          };
           
+          // --- APPLY STYLING EFFECT ---
+          // This ensures changes in Admin Panel immediately reflect in CSS
+          const root = document.documentElement;
+          // Guard against missing styling object just in case
+          const safeStyling = current.styling || DEFAULT_CONFIG.styling;
+          
+          root.style.setProperty('--font-main', safeStyling.fontFamily || "'Space Grotesk', sans-serif");
+          root.style.setProperty('--text-main', safeStyling.textColor || '#ffffff');
+          root.style.setProperty('--gold', current.lighting.accentColor);
+
+          // Trigger Auto-Save (Fire and forget)
+          this.saveGlobalConfig(current, false);
+      });
+  }
+  
+  private startPolling() {
+      if (this.pollingInterval) clearInterval(this.pollingInterval);
+      
+      this.pollingInterval = setInterval(async () => {
+         if (!this.isAdminOpen() && !this.isCustomizing()) {
+             // If we have too many errors, stop polling to save console/network
+             if (this.consecutiveErrors > 5) {
+                 console.warn('Backend appears offline. Polling paused.');
+                 clearInterval(this.pollingInterval);
+                 return;
+             }
+             await this.pollServerUpdates();
+         }
+      }, 3000);
+  }
+
+  // Explicitly Save Configuration (Public Method)
+  async saveGlobalConfig(current: AppConfig = this.config(), isManual = true) {
+      if (isManual) this.incrementLoading();
+      
+      const safeStyling = current.styling || DEFAULT_CONFIG.styling;
+
+      const globalSettings = {
+         lighting: current.lighting,
+         audio: current.audio,
+         texts: current.texts,
+         styling: safeStyling, 
+         character: current.character, 
+         logoAssetId: current.logoAssetId,
+         logoUrl: current.logoUrl,
+         floorTextureAssetId: current.floorTextureAssetId,
+         floorTextureUrl: current.floorTextureUrl, 
+         standTextureAssetId: current.standTextureAssetId,
+         standTextureUrl: current.standTextureUrl,
+         gateTextureAssetId: current.gateTextureAssetId,
+         gateTextureUrl: current.gateTextureUrl,
+         
+         // Environment settings
+         environments: current.environments,
+         activeEnvironmentId: current.activeEnvironmentId,
+         
+         // Scene Objects
+         sceneObjects: current.sceneObjects,
+         
+         renderQuality: current.renderQuality,
+         activeCarIndex: current.activeCarIndex
+      };
+      
+      try {
           // 1. Server Persistence (Primary)
-          this.api.saveSettings(globalSettings);
+          await this.api.saveSettings(globalSettings);
 
           // 2. Local Persistence (Backup)
-          try {
-              localStorage.setItem('lexus_global_settings_v4', JSON.stringify(globalSettings));
-          } catch (e) {
-              console.warn('Failed to save settings locally', e);
-          }
-      });
+          localStorage.setItem('lexus_global_settings_v4', JSON.stringify(globalSettings));
+          
+          if (isManual) console.log('Settings Saved Successfully');
+      } catch (e) {
+          // Silent catch for auto-save
+          if (isManual) console.error('Failed to save settings', e);
+      } finally {
+          if (isManual) this.decrementLoading();
+      }
   }
 
   private async initializeData() {
       this.incrementLoading();
       try {
-          let loadedConfig = { ...DEFAULT_CONFIG };
+          // Deep copy default config to ensure we don't mutate const
+          let loadedConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
           let usedServerConfig = false;
 
           // 1. Load Global Settings (Server Priority)
           const serverSettings = await this.api.getSettings();
           if (serverSettings && Object.keys(serverSettings).length > 0) {
               loadedConfig = { ...loadedConfig, ...serverSettings };
+              if (!loadedConfig.styling) {
+                  loadedConfig.styling = { ...DEFAULT_CONFIG.styling };
+              }
               usedServerConfig = true;
           } else {
               // Fallback to local if server is down
@@ -98,11 +161,18 @@ export class StoreService {
                   if (savedSettings) {
                       const parsed = JSON.parse(savedSettings);
                       loadedConfig = { ...loadedConfig, ...parsed };
+                      if (!loadedConfig.styling) {
+                          loadedConfig.styling = { ...DEFAULT_CONFIG.styling };
+                      }
                   }
               } catch (e) { console.warn('Settings load error', e); }
           }
           
+          // Final safety check for styling
+          if (!loadedConfig.styling) loadedConfig.styling = { ...DEFAULT_CONFIG.styling };
+          
           if (!loadedConfig.environments) loadedConfig.environments = [];
+          if (!loadedConfig.sceneObjects) loadedConfig.sceneObjects = [];
 
           // 2. Load Cars (Server Priority)
           const serverCars = await this.api.getCars();
@@ -122,7 +192,6 @@ export class StoreService {
           }
 
           // 3. Hydrate Assets
-          
           if (!usedServerConfig) {
              // Only attempt blob hydration if we are relying on local data
              await this.hydrateGlobalAssets(loadedConfig);
@@ -133,6 +202,47 @@ export class StoreService {
           this.config.set(loadedConfig);
       } finally {
           this.decrementLoading();
+      }
+  }
+  
+  // --- Polling Logic ---
+  private async pollServerUpdates() {
+      // Don't overwrite if user is actively interacting to avoid jumps
+      if (this.isLoading()) return;
+
+      try {
+        const serverSettings = await this.api.getSettings();
+        
+        if (serverSettings === null) {
+            this.consecutiveErrors++;
+            return;
+        }
+
+        // Reset error count on success
+        this.consecutiveErrors = 0;
+
+        if (serverSettings && Object.keys(serverSettings).length > 0) {
+            this.config.update(current => {
+                // Defensive merge for styling
+                const newStyling = serverSettings.styling || current.styling || DEFAULT_CONFIG.styling;
+                
+                return {
+                    ...current,
+                    ...serverSettings,
+                    styling: newStyling
+                };
+            });
+        }
+        
+        const serverCars = await this.api.getCars();
+        if (serverCars && serverCars.length > 0) {
+            this.config.update(current => ({
+                ...current,
+                fleet: serverCars
+            }));
+        }
+      } catch (e) {
+          this.consecutiveErrors++;
       }
   }
 
@@ -149,11 +259,19 @@ export class StoreService {
 
       conf.logoUrl = (await hydrate(conf.logoAssetId, conf.logoUrl)) || conf.logoUrl;
       conf.floorTextureUrl = (await hydrate(conf.floorTextureAssetId, conf.floorTextureUrl)) || conf.floorTextureUrl;
+      conf.standTextureUrl = (await hydrate(conf.standTextureAssetId, conf.standTextureUrl)) || conf.standTextureUrl;
+      conf.gateTextureUrl = (await hydrate(conf.gateTextureAssetId, conf.gateTextureUrl)) || conf.gateTextureUrl;
       conf.character.modelUrl = (await hydrate(conf.character.modelAssetId, conf.character.modelUrl)) || conf.character.modelUrl;
       
       if (conf.environments) {
           for (const env of conf.environments) {
               env.url = (await hydrate(env.assetId, env.url)) || env.url;
+          }
+      }
+      
+      if (conf.sceneObjects) {
+          for (const obj of conf.sceneObjects) {
+              obj.url = (await hydrate(obj.assetId, obj.url)) || obj.url;
           }
       }
   }
@@ -262,6 +380,28 @@ export class StoreService {
               activeEnvironmentId: c.activeEnvironmentId === id ? (newEnvs[0]?.id || null) : c.activeEnvironmentId
           };
       });
+  }
+  
+  // Scene Object Actions
+  addSceneObject(obj: SceneObject) {
+      this.config.update(c => ({
+          ...c,
+          sceneObjects: [...c.sceneObjects, obj]
+      }));
+  }
+
+  updateSceneObject(id: string, updates: Partial<SceneObject>) {
+      this.config.update(c => ({
+          ...c,
+          sceneObjects: c.sceneObjects.map(o => o.id === id ? { ...o, ...updates } : o)
+      }));
+  }
+
+  removeSceneObject(id: string) {
+      this.config.update(c => ({
+          ...c,
+          sceneObjects: c.sceneObjects.filter(o => o.id !== id)
+      }));
   }
   
   addHotspot(type: 'interiorPoints' | 'techPoints') {

@@ -30,40 +30,46 @@
 <!-- UI Layer -->
 <div class="ui-layer flex flex-col justify-between h-full pointer-events-none">
   
-  <!-- Top Navigation Menu -->
-  @if (!store.isCustomizing()) {
-    <nav class="absolute top-0 left-0 w-full flex justify-center gap-8 p-6 z-40 pointer-events-auto mix-blend-screen text-white uppercase text-[10px] tracking-[0.2em] font-bold hidden md:flex">
-      <a href="#" class="hover:text-amber-500 transition-colors">Experience Amazing</a>
-      <a href="#" class="hover:text-amber-500 transition-colors">Our Fleet</a>
-      <a href="#" class="hover:text-amber-500 transition-colors">Only Luxury</a>
-      <a href="#" class="hover:text-amber-500 transition-colors">Talk to Us</a>
+  <!-- HEADER AREA -->
+  <div class="absolute top-0 left-0 w-full p-8 flex items-start justify-between z-50 pointer-events-none">
+      
+      <!-- Left Group: Branding -->
+      <div class="flex items-start gap-8 pointer-events-auto">
+          <!-- Branding (Hidden if Menu Open) -->
+          @if (!store.isCustomizing() && !store.isMenuOpen()) {
+            <div class="branding relative top-0 left-0 transform-none flex flex-col items-start animate-fade-in">
+              <img [src]="store.config().logoUrl" alt="Lexus" class="w-24 invert brightness-200 mb-4">
+              <div class="header-meta">
+                <span class="sub text-[10px] tracking-[0.3em] uppercase block mb-2" [style.color]="store.config().lighting.accentColor">{{store.config().texts.subtitle}}</span>
+                <h1 class="text-4xl font-light uppercase tracking-tighter m-0 leading-none">{{store.activeSection().label}}</h1>
+                <p class="desc text-xs opacity-60 mt-3 font-light max-w-[300px] border-l pl-4 leading-relaxed" [style.border-color]="store.activeCar().color">
+                  {{store.activeCar().name}} {{store.activeCar().year}}<br/>
+                  <span class="text-[10px] opacity-70">{{store.activeCar().type}}</span>
+                </p>
+              </div>
+            </div>
+          }
+      </div>
+
+      <!-- Right Group: Audio -->
+      <div class="pointer-events-auto">
+          <button class="glass-btn w-12 h-12 flex items-center justify-center rounded-full border border-white/20 bg-black/20 backdrop-blur-md hover:bg-white hover:text-black transition-all" (click)="store.toggleMute()">
+            <i class="fas" [class.fa-volume-mute]="store.config().audio.muted" [class.fa-volume-up]="!store.config().audio.muted"></i>
+          </button>
+      </div>
+  </div>
+
+  <!-- Regular Navigation (Hidden if 3D Menu is Open) -->
+  @if (!store.isCustomizing() && !store.isMenuOpen()) {
+    <nav class="absolute top-0 left-1/2 -translate-x-1/2 w-auto flex justify-center gap-12 pt-10 z-40 pointer-events-auto mix-blend-screen uppercase text-[10px] tracking-[0.2em] font-bold hidden md:flex" [style.color]="store.config().styling?.textColor">
+      <a href="#" class="hover:text-amber-500 transition-colors opacity-70 hover:opacity-100">Experience Amazing</a>
+      <a href="#" class="hover:text-amber-500 transition-colors opacity-70 hover:opacity-100">Our Fleet</a>
+      <a href="#" class="hover:text-amber-500 transition-colors opacity-70 hover:opacity-100">Only Luxury</a>
     </nav>
   }
 
-  <!-- Branding -->
-  @if (!store.isCustomizing()) {
-    <div class="branding pointer-events-auto">
-      <img [src]="store.config().logoUrl" alt="Lexus" class="lexus-logo">
-      <div class="header-meta">
-        <span class="sub" [style.color]="store.config().lighting.accentColor">{{store.config().texts.subtitle}}</span>
-        <h1>{{store.activeSection().label}}</h1>
-        <p class="desc" [style.border-color]="store.activeCar().color">
-          {{store.activeCar().name}} {{store.activeCar().year}}<br/>
-          <span class="text-xs opacity-70">{{store.activeCar().type}}</span>
-        </p>
-      </div>
-    </div>
-  }
-
-  <!-- Top Right Controls -->
-  <div class="interactive absolute top-10 right-10 flex gap-4 items-center z-50 pointer-events-auto">
-    <button class="glass-btn min-w-[40px] flex items-center justify-center" (click)="store.toggleMute()">
-      <i class="fas" [class.fa-volume-mute]="store.config().audio.muted" [class.fa-volume-up]="!store.config().audio.muted"></i>
-    </button>
-  </div>
-
   <!-- Timeline -->
-  @if (!store.isCustomizing()) {
+  @if (!store.isCustomizing() && !store.isMenuOpen()) {
     <div class="timeline interactive pointer-events-auto">
       @for (sec of store.sections(); track sec.id; let idx = $index) {
         <div class="timeline-item" [class.active]="store.activeSectionIndex() === idx" (click)="store.activeSectionIndex.set(idx)">
@@ -79,7 +85,7 @@
   }
 
   <!-- Action Buttons (Drive Mode) -->
-  @if (!store.isCustomizing()) {
+  @if (!store.isCustomizing() && !store.isMenuOpen()) {
     <div class="interactive absolute left-1/2 flex gap-5 z-30 pointer-events-auto"
          style="bottom: 40px; transform: translateX(-50%)">
       @if (store.activeSection().id === 'drive') {
@@ -95,7 +101,7 @@
   }
 
   <!-- Car Selector -->
-  @if (!store.isCustomizing() && store.activeSection().id !== 'drive' && store.activeSection().id !== 'walk') {
+  @if (!store.isCustomizing() && store.activeSection().id !== 'drive' && store.activeSection().id !== 'walk' && !store.isMenuOpen()) {
     <div class="car-selector interactive absolute bottom-0 left-0 w-full flex justify-center pb-8 pt-12 bg-gradient-to-t from-black via-black/80 to-transparent z-40 pointer-events-auto">
       <div class="flex gap-4 overflow-x-auto p-2 max-w-[90vw] md:max-w-full no-scrollbar">
         @for (car of store.config().fleet; track car.id; let idx = $index) {
@@ -113,7 +119,7 @@
   }
 
   <!-- Joystick -->
-  @if ((store.activeSection().id === 'drive' || store.activeSection().id === 'walk') && !store.isCustomizing()) {
+  @if ((store.activeSection().id === 'drive' || store.activeSection().id === 'walk') && !store.isCustomizing() && !store.isMenuOpen()) {
     <app-joystick class="pointer-events-auto"></app-joystick>
   }
 
@@ -121,11 +127,19 @@
   @if (store.isAdminOpen()) {
     <div class="admin-panel interactive fixed top-0 left-0 h-full w-[300px] bg-black/95 text-white z-[60] p-6 border-r border-zinc-800 backdrop-blur-xl overflow-y-auto slide-in pointer-events-auto">
       <div class="flex justify-between items-center mb-6">
-         <h2 class="text-xl font-bold tracking-wider text-white">SYSTEM</h2>
+         <div class="flex flex-col">
+            <h2 class="text-xl font-bold tracking-wider text-white m-0">SYSTEM</h2>
+            <span class="text-[9px] text-zinc-500 uppercase">Administrator Mode</span>
+         </div>
          <button (click)="store.isAdminOpen.set(false)" class="text-zinc-500 hover:text-white">✕</button>
       </div>
 
-      <div class="space-y-6">
+      <!-- Save Button -->
+      <button (click)="saveAllSettings()" class="w-full bg-green-700 hover:bg-green-600 text-white font-bold py-3 px-4 rounded text-xs tracking-widest uppercase mb-6 shadow-lg transition-all flex items-center justify-center gap-2">
+         <i class="fas fa-save"></i> Save System Settings
+      </button>
+
+      <div class="space-y-6 pb-20">
         
         <!-- Branding Config -->
         <div class="p-4 bg-white/5 rounded space-y-3">
@@ -138,6 +152,36 @@
                <label class="text-[10px] text-zinc-400 mb-1 block">Page Title</label>
                <input type="text" [value]="store.config().texts.title" (input)="updatePageTitle($event)" class="w-full bg-zinc-800 border-none rounded p-1 text-xs text-white">
             </div>
+            
+            <!-- Font Selection -->
+            <div>
+               <label class="text-[10px] text-zinc-400 mb-1 block">Font Family</label>
+               <select (change)="updateFont($event)" class="w-full bg-zinc-800 border-none rounded p-1 text-xs text-white cursor-pointer focus:outline-none">
+                  <option value="'Space Grotesk', sans-serif" [selected]="store.config().styling?.fontFamily?.includes('Space Grotesk')">Space Grotesk</option>
+                  <option value="'Inter', sans-serif" [selected]="store.config().styling?.fontFamily?.includes('Inter')">Inter</option>
+                  <option value="'Roboto', sans-serif" [selected]="store.config().styling?.fontFamily?.includes('Roboto')">Roboto</option>
+                  <option value="'Playfair Display', serif" [selected]="store.config().styling?.fontFamily?.includes('Playfair')">Playfair Display</option>
+                  <option value="'Montserrat', sans-serif" [selected]="store.config().styling?.fontFamily?.includes('Montserrat')">Montserrat</option>
+               </select>
+            </div>
+
+            <!-- Color Pickers -->
+            <div class="grid grid-cols-2 gap-2">
+                <div>
+                   <label class="text-[10px] text-zinc-400 mb-1 block">Web Text Color</label>
+                   <div class="flex items-center gap-2 bg-zinc-800 rounded p-1">
+                      <input type="color" [value]="store.config().styling?.textColor || '#ffffff'" (input)="updateTextColor($event)" class="w-6 h-6 border-none cursor-pointer bg-transparent">
+                      <span class="text-[9px] uppercase">{{store.config().styling?.textColor}}</span>
+                   </div>
+                </div>
+                <div>
+                   <label class="text-[10px] text-zinc-400 mb-1 block">Web Accent Color</label>
+                   <div class="flex items-center gap-2 bg-zinc-800 rounded p-1">
+                      <input type="color" [value]="store.config().lighting.accentColor" (input)="updateAccentColor($event)" class="w-6 h-6 border-none cursor-pointer bg-transparent">
+                      <span class="text-[9px] uppercase">{{store.config().lighting.accentColor}}</span>
+                   </div>
+                </div>
+            </div>
         </div>
 
         <!-- Graphics Config -->
@@ -146,20 +190,32 @@
             <div>
                <label class="text-[10px] text-zinc-400 mb-1 block">Render Quality</label>
                <select (change)="updateQuality($event)" class="w-full bg-zinc-800 border-none rounded p-1 text-xs text-white cursor-pointer focus:outline-none focus:ring-1 focus:ring-white/50">
-                 <option value="high" [selected]="store.config().renderQuality === 'high'">High (Shadows, 2x Res)</option>
+                 <option value="ultra" [selected]="store.config().renderQuality === 'ultra'">Ultra (Native Res, 4K Shadows)</option>
+                 <option value="high" [selected]="store.config().renderQuality === 'high'">High (2x Res, Shadows)</option>
                  <option value="low" [selected]="store.config().renderQuality === 'low'">Low (Performance, 1x Res)</option>
                </select>
-               <p class="text-[9px] text-zinc-500 mt-1">Low mode disables shadows and reduces resolution for better performance on mobile.</p>
+               <p class="text-[9px] text-zinc-500 mt-1">Ultra uses your screen's maximum capability. May be demanding.</p>
             </div>
         </div>
 
-        <!-- Environment Config (UPDATED) -->
+        <!-- Environment Config -->
         <div class="p-4 bg-white/5 rounded space-y-4">
           <h3 class="text-xs uppercase text-zinc-500 font-bold">3D Environment</h3>
           
           <div>
             <label class="text-xs uppercase text-zinc-500 block mb-2 font-bold">Floor Texture</label>
             <input type="file" accept="image/*" (change)="onFloorTextureSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
+          </div>
+
+          <div>
+            <label class="text-xs uppercase text-zinc-500 block mb-2 font-bold">Stand Texture</label>
+            <input type="file" accept="image/*" (change)="onStandTextureSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
+          </div>
+          
+          <div>
+            <label class="text-xs uppercase text-zinc-500 block mb-2 font-bold">Menu Gate Texture</label>
+            <input type="file" accept="image/*" (change)="onGateTextureSelected($event)" class="text-xs w-full text-zinc-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-zinc-700 file:text-white hover:file:bg-zinc-600">
+            <div class="text-[9px] text-zinc-500 mt-1">Will be rendered in B&W for the 3D Menu</div>
           </div>
           
           <div>
@@ -229,6 +285,74 @@
                   </div>
               </div>
           }
+        </div>
+
+        <!-- SCENE OBJECTS CONFIG -->
+        <div class="p-4 bg-white/5 rounded space-y-4 border border-zinc-700">
+           <h3 class="text-xs uppercase text-zinc-500 font-bold">Custom Scene Objects</h3>
+           <div class="space-y-4">
+              @for (obj of store.config().sceneObjects; track obj.id) {
+                <div class="p-3 bg-zinc-800/50 rounded border border-zinc-700">
+                   <div class="flex justify-between items-center mb-2">
+                      <span class="text-xs font-bold text-white truncate max-w-[150px]">{{obj.name}}</span>
+                      <button (click)="removeSceneObject(obj.id)" class="text-red-500 text-[10px] hover:text-red-300">REMOVE</button>
+                   </div>
+                   
+                   <!-- Pos Config -->
+                   <div class="grid grid-cols-3 gap-1 mb-2">
+                      <div>
+                        <label class="text-[8px] text-zinc-500 block text-center">X</label>
+                        <input type="number" [value]="obj.position[0]" (input)="updateObjPos($event, obj.id, 0)" class="w-full bg-black text-[9px] p-1 text-center rounded text-white">
+                      </div>
+                      <div>
+                        <label class="text-[8px] text-zinc-500 block text-center">Y</label>
+                        <input type="number" [value]="obj.position[1]" (input)="updateObjPos($event, obj.id, 1)" class="w-full bg-black text-[9px] p-1 text-center rounded text-white">
+                      </div>
+                      <div>
+                        <label class="text-[8px] text-zinc-500 block text-center">Z</label>
+                        <input type="number" [value]="obj.position[2]" (input)="updateObjPos($event, obj.id, 2)" class="w-full bg-black text-[9px] p-1 text-center rounded text-white">
+                      </div>
+                   </div>
+                   
+                   <!-- Rotation Config (Full XYZ) -->
+                   <div class="grid grid-cols-3 gap-1 mb-2">
+                      <div>
+                        <label class="text-[8px] text-zinc-500 block text-center">Rot X</label>
+                        <input type="number" step="0.1" [value]="obj.rotation[0]" (input)="updateObjRot($event, obj.id, 0)" class="w-full bg-black text-[9px] p-1 text-center rounded text-white">
+                      </div>
+                      <div>
+                        <label class="text-[8px] text-zinc-500 block text-center">Rot Y</label>
+                        <input type="number" step="0.1" [value]="obj.rotation[1]" (input)="updateObjRot($event, obj.id, 1)" class="w-full bg-black text-[9px] p-1 text-center rounded text-white">
+                      </div>
+                      <div>
+                        <label class="text-[8px] text-zinc-500 block text-center">Rot Z</label>
+                        <input type="number" step="0.1" [value]="obj.rotation[2]" (input)="updateObjRot($event, obj.id, 2)" class="w-full bg-black text-[9px] p-1 text-center rounded text-white">
+                      </div>
+                   </div>
+                   
+                   <!-- Scale -->
+                   <div class="mb-2">
+                      <label class="text-[8px] text-zinc-500 block text-center">Uniform Scale</label>
+                      <input type="number" step="0.1" [value]="obj.scale[0]" (input)="updateObjScale($event, obj.id)" class="w-full bg-black text-[9px] p-1 text-center rounded text-white">
+                   </div>
+
+                   <!-- Replace File -->
+                   <label class="text-[8px] text-blue-400 cursor-pointer block text-center mt-2 hover:text-white">
+                       REPLACE FILE (.glb)
+                       <input type="file" accept=".glb,.gltf" (change)="onReplaceObjectFile($event, obj.id)" class="hidden">
+                   </label>
+                </div>
+              }
+              
+              @if (store.config().sceneObjects.length === 0) {
+                 <div class="text-[10px] text-zinc-500 italic text-center p-2">No custom objects in scene</div>
+              }
+
+              <label class="glass-btn w-full text-center block cursor-pointer border-dashed border-zinc-600 hover:border-white">
+                 + UPLOAD OBJECT (.GLB)
+                 <input type="file" accept=".glb,.gltf" (change)="onUploadSceneObject($event)" class="hidden">
+              </label>
+           </div>
         </div>
 
         <!-- Hotspot Editor (Only in Tech or Interior) -->
@@ -308,7 +432,7 @@
             <div>
                <label class="text-[10px] uppercase font-bold text-zinc-400 mb-1 block">Scale</label>
                <div class="flex items-center gap-2">
-                  <input type="range" min="0.1" max="3" step="0.1" 
+                  <input type="range" min="0.01" max="3" step="0.01" 
                          [value]="store.config().character.scale" 
                          (input)="updateCharacterScale($event)"
                          class="w-full accent-white h-1 bg-zinc-700 rounded appearance-none cursor-pointer">
@@ -372,7 +496,7 @@
   }
 
   <!-- Build Button -->
-  @if (!store.isCustomizing()) {
+  @if (!store.isCustomizing() && !store.isMenuOpen()) {
     <div class="absolute left-1/2 -translate-x-1/2 pointer-events-auto" 
          style="top: 120px"
          [style.transform]="'translateX(-50%) translate(' + store.config().uiOffsets.buildBtn.x + 'px, ' + store.config().uiOffsets.buildBtn.y + 'px)'">

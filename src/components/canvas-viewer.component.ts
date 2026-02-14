@@ -1,3 +1,4 @@
+
 import { Component, ElementRef, AfterViewInit, ViewChild, inject, HostListener } from '@angular/core';
 import { ThreeSceneService } from '../services/three-scene.service';
 
@@ -23,5 +24,10 @@ export class CanvasViewerComponent implements AfterViewInit {
   @HostListener('window:keyup', ['$event'])
   onKeyUp(e: KeyboardEvent) {
     this.threeService.handleKeyUp(e.key);
+  }
+  
+  @HostListener('mousedown', ['$event'])
+  onMouseDown(e: MouseEvent) {
+      this.threeService.handleClick(e);
   }
 }
